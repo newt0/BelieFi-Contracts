@@ -1637,6 +1637,17 @@ local function validateMetadata(metadata)
   return validation
 end
 
+-- Get sentiment rarity tier for attributes
+local function getSentimentRarityTier(sentiment)
+  local rarityMap = {
+    very_bullish = "Legendary",
+    bullish = "Rare", 
+    neutral = "Common",
+    bearish = "Uncommon"
+  }
+  return rarityMap[sentiment] or "Common"
+end
+
 -- Generate complete NFT metadata
 local function generateNFTMetadata(nftId, owner, luckyNumber, marketSentiment)
   -- Validate inputs
@@ -1738,17 +1749,6 @@ local function generateNFTMetadata(nftId, owner, luckyNumber, marketSentiment)
   end
   
   return metadata, nil
-end
-
--- Get sentiment rarity tier for attributes
-local function getSentimentRarityTier(sentiment)
-  local rarityMap = {
-    very_bullish = "Legendary",
-    bullish = "Rare", 
-    neutral = "Common",
-    bearish = "Uncommon"
-  }
-  return rarityMap[sentiment] or "Common"
 end
 
 -- Store metadata for an NFT
@@ -2920,7 +2920,7 @@ local function testMintFlow(testAddress)
     return false, "Test mode disabled"
   end
   
-  testAddress = testAddress or "test_address_1234567890123456789012345678901"
+  testAddress = testAddress or "test_addr_123456789012345678901234567890123"
   
   logInfo("=== Testing Mint Flow ===", {test_address = testAddress})
   
