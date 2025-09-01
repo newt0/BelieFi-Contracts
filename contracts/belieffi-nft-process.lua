@@ -141,7 +141,6 @@ State.public_mint_enabled = State.public_mint_enabled or true
 
 -- Address Management
 State.minted_by_address = State.minted_by_address or {} -- address -> boolean
-State.mint_records = State.mint_records or {} -- address -> mint_info
 State.nft_owners = State.nft_owners or {} -- nft_id -> owner_address
 State.nft_balances = State.nft_balances or {} -- address -> count
 
@@ -163,12 +162,9 @@ State.refund_history = State.refund_history or {} -- tx_id -> refund_info
 -- Lucky Number Management (Phase 2-1)
 State.lucky_numbers_assigned = State.lucky_numbers_assigned or {} -- nft_id -> lucky_number
 State.current_lucky_index = State.current_lucky_index or 1 -- Next index to use from LUCKY_NUMBERS
-State.lucky_number_index = State.lucky_number_index or 0
-State.lucky_number_used_count = State.lucky_number_used_count or 0
 
 -- Market Sentiment Management (Phase 2-2)
 State.market_sentiments = State.market_sentiments or {} -- nft_id -> market_sentiment
-State.market_sentiment_records = State.market_sentiment_records or {}
 State.sentiment_statistics = State.sentiment_statistics or {
   bearish = 0,
   neutral = 0,
@@ -694,23 +690,31 @@ local function initializeLuckyNumbers()
   return true
 end
 
--- Get the next lucky number for minting (SIMPLIFIED VERSION)
+-- Get the next lucky number for minting
 local function getNextLuckyNumber()
-  -- Use simple modulo to cycle through lucky numbers
-  local index = (State.total_minted % 100) + 1  -- 1-100 range
-  local luckyNumber = LUCKY_NUMBERS[index]
-  
-  logInfo("getNextLuckyNumber simple version", {
-    total_minted = State.total_minted,
-    index = index,
-    lucky_number = luckyNumber
-  })
-  
-  -- Fallback if still nil
-  if not luckyNumber then
-    luckyNumber = 42  -- Default fallback
-    logInfo("Using fallback lucky number", {lucky_number = luckyNumber})
+  -- Check if we have remaining lucky numbers
+  if State.current_lucky_index > #LUCKY_NUMBERS then
+    logError("No more lucky numbers available", {
+      current_index = State.current_lucky_index,
+      max_index = #LUCKY_NUMBERS
+    })
+    return nil
   end
+  
+  -- Get the lucky number at current index
+  local luckyNumber = LUCKY_NUMBERS[State.current_lucky_index]
+  
+  -- Validate lucky number is in range
+  if luckyNumber < 0 or luckyNumber > 999 then
+    logError("Lucky number out of range", {
+      lucky_number = luckyNumber,
+      index = State.current_lucky_index
+    })
+    return nil
+  end
+  
+  -- Increment index for next use
+  State.current_lucky_index = State.current_lucky_index + 1
   
   return luckyNumber
 end
@@ -834,36 +838,14 @@ end
 
 -- Generate complete market sentiment object
 local function generateMarketSentiment(luckyNumber)
-  -- Input validation and logging
-  logInfo("generateMarketSentiment called", {
-    lucky_number = luckyNumber,
-    type = type(luckyNumber)
-  })
-  
-  if not luckyNumber then
-    logError("generateMarketSentiment: luckyNumber is nil")
-    return nil
-  end
-  
   -- Get sentiment type based on lucky number
   local sentimentType = getSentimentByLuckyNumber(luckyNumber)
-  logInfo("getSentimentByLuckyNumber result", {
-    lucky_number = luckyNumber,
-    sentiment_type = sentimentType
-  })
-  
   if not sentimentType then
-    logError("getSentimentByLuckyNumber returned nil", {lucky_number = luckyNumber})
     return nil
   end
   
   -- Get pattern for this sentiment
   local pattern = SENTIMENT_PATTERNS[sentimentType]
-  logInfo("Pattern lookup result", {
-    sentiment_type = sentimentType,
-    pattern_exists = pattern ~= nil
-  })
-  
   if not pattern then
     logError("No pattern found for sentiment type", {sentiment_type = sentimentType})
     return nil
@@ -883,12 +865,6 @@ local function generateMarketSentiment(luckyNumber)
   for _, factor in ipairs(pattern.market_factors) do
     table.insert(marketSentiment.market_factors, factor)
   end
-  
-  logInfo("Market sentiment generated successfully", {
-    lucky_number = luckyNumber,
-    sentiment_type = sentimentType,
-    confidence_score = pattern.confidence_score
-  })
   
   return marketSentiment
 end
