@@ -125,9 +125,11 @@ State.total_revenue = State.total_revenue or "0"
 State.revenue_records = State.revenue_records or {} -- nft_id -> amount
 State.process_balance = State.process_balance or "0"
 
--- Transaction Processing
+-- Payment Processing (Phase 3-1)
+State.payment_records = State.payment_records or {} -- tx_id -> payment_info
 State.processed_transactions = State.processed_transactions or {} -- tx_id -> boolean
 State.pending_refunds = State.pending_refunds or {} -- address -> amount
+State.refund_history = State.refund_history or {} -- tx_id -> refund_info
 
 -- Lucky Number Management (Phase 2-1)
 State.lucky_numbers_assigned = State.lucky_numbers_assigned or {} -- nft_id -> lucky_number
@@ -960,6 +962,309 @@ local function generateNFTData(nftId)
 end
 
 -- ============================================================================
+-- PAYMENT PROCESSING FUNCTIONS (Phase 3-1)
+-- ============================================================================
+
+-- Validate payment amount (exactly 1 USDA)
+local function validatePaymentAmount(amount)
+  if type(amount) ~= "string" then
+    return false, "Payment amount must be a string"
+  end
+  
+  local expectedAmount = MINT_PRICE
+  if amount ~= expectedAmount then
+    local numAmount = tonumber(amount) or 0
+    local numExpected = tonumber(expectedAmount) or 0
+    
+    if numAmount < numExpected then
+      return false, "Insufficient payment. Required: 1 USDA"
+    elseif numAmount > numExpected then
+      return false, "Overpayment detected", numAmount - numExpected
+    end
+  end
+  
+  return true, "Payment amount correct"
+end
+
+-- Check if transaction was already processed
+local function isTransactionProcessed(txId)
+  return State.processed_transactions[txId] ~= nil
+end
+
+-- Record transaction as processed
+local function markTransactionProcessed(txId, details)
+  State.processed_transactions[txId] = {
+    processed_at = getCurrentTimestamp(),
+    details = details or {}
+  }
+end
+
+-- Process payment record
+local function recordPayment(txId, fromAddress, amount, timestamp)
+  local paymentInfo = {
+    transaction_id = txId,
+    from_address = fromAddress,
+    amount = amount,
+    timestamp = timestamp or getCurrentTimestamp(),
+    status = "received"
+  }
+  
+  State.payment_records[txId] = paymentInfo
+  logInfo(string.format("Payment recorded: %s USDA from %s", amount, fromAddress))
+  
+  return paymentInfo
+end
+
+-- Process refund
+local function processRefund(toAddress, amount, reason, originalTxId)
+  -- Validate inputs
+  if not isValidAddress(toAddress) then
+    logError("Invalid address for refund", {address = toAddress})
+    return false, "Invalid address"
+  end
+  
+  if not amount or tonumber(amount) <= 0 then
+    logError("Invalid refund amount", {amount = amount})
+    return false, "Invalid amount"
+  end
+  
+  -- Create refund record
+  local refundInfo = {
+    to_address = toAddress,
+    amount = amount,
+    reason = reason or "Refund",
+    original_transaction = originalTxId,
+    refund_timestamp = getCurrentTimestamp(),
+    status = "pending"
+  }
+  
+  -- Add to pending refunds
+  State.pending_refunds[toAddress] = (State.pending_refunds[toAddress] or "0")
+  local currentPending = tonumber(State.pending_refunds[toAddress]) or 0
+  local refundAmount = tonumber(amount) or 0
+  State.pending_refunds[toAddress] = tostring(currentPending + refundAmount)
+  
+  -- Send refund message
+  ao.send({
+    Target = USDA_PROCESS_ID,
+    Action = "Transfer",
+    Recipient = toAddress,
+    Quantity = amount,
+    ["X-Reason"] = reason,
+    ["X-Original-TX"] = originalTxId or ""
+  })
+  
+  -- Record refund
+  local refundTxId = originalTxId .. "_refund_" .. os.time()
+  State.refund_history[refundTxId] = refundInfo
+  
+  logInfo(string.format("Refund processed: %s USDA to %s (Reason: %s)", amount, toAddress, reason))
+  
+  return true, "Refund processed"
+end
+
+-- Get payment status for an address
+local function getPaymentStatus(address)
+  local status = {
+    address = address,
+    has_paid = false,
+    payment_amount = "0",
+    transaction_id = nil,
+    pending_refund = State.pending_refunds[address] or "0"
+  }
+  
+  -- Check payment records
+  for txId, payment in pairs(State.payment_records) do
+    if payment.from_address == address and payment.status == "received" then
+      status.has_paid = true
+      status.payment_amount = payment.amount
+      status.transaction_id = txId
+      break
+    end
+  end
+  
+  return status
+end
+
+-- Validate Credit-Notice message
+local function validateCreditNotice(msg)
+  -- Check sender is USDA token process
+  if msg.From ~= USDA_PROCESS_ID then
+    return false, "Payment not from USDA token process"
+  end
+  
+  -- Check action
+  if msg.Action ~= "Credit-Notice" then
+    return false, "Not a credit notice"
+  end
+  
+  -- Extract payment details
+  local amount = msg.Quantity or msg.Amount
+  local fromAddress = msg.Sender or msg["From-Process"]
+  
+  if not amount then
+    return false, "No payment amount specified"
+  end
+  
+  if not fromAddress or not isValidAddress(fromAddress) then
+    return false, "Invalid sender address"
+  end
+  
+  return true, {
+    amount = amount,
+    from_address = fromAddress,
+    transaction_id = msg.Id
+  }
+end
+
+-- Process complete payment and mint flow
+local function processPaymentAndMint(paymentDetails)
+  local fromAddress = paymentDetails.from_address
+  local amount = paymentDetails.amount
+  local txId = paymentDetails.transaction_id
+  
+  -- Check if transaction already processed
+  if isTransactionProcessed(txId) then
+    logError("Transaction already processed", {tx_id = txId})
+    return createErrorResponse("Transaction already processed")
+  end
+  
+  -- Validate payment amount
+  local isValidAmount, message, excessAmount = validatePaymentAmount(amount)
+  if not isValidAmount then
+    -- If overpayment, process refund for excess
+    if excessAmount and excessAmount > 0 then
+      processRefund(fromAddress, tostring(excessAmount), "Overpayment refunded", txId)
+      -- Continue with mint using correct amount
+      amount = MINT_PRICE
+    else
+      -- Insufficient payment - refund everything
+      processRefund(fromAddress, amount, "Insufficient payment", txId)
+      markTransactionProcessed(txId, {error = message})
+      return createErrorResponse(message)
+    end
+  end
+  
+  -- Check mint eligibility
+  local eligibility = checkMintEligibility(fromAddress)
+  if not eligibility.eligible then
+    -- Refund full amount
+    processRefund(fromAddress, amount, eligibility.reason, txId)
+    markTransactionProcessed(txId, {error = eligibility.reason})
+    return createErrorResponse(eligibility.reason)
+  end
+  
+  -- Record payment
+  recordPayment(txId, fromAddress, amount, getCurrentTimestamp())
+  
+  -- Generate NFT data (lucky number + market sentiment)
+  local nftId = generateNextNFTId()
+  if not nftId then
+    processRefund(fromAddress, amount, "No more NFTs available", txId)
+    markTransactionProcessed(txId, {error = "Sold out"})
+    return createErrorResponse("All NFTs have been minted")
+  end
+  
+  local nftData, error = generateNFTData(nftId)
+  if not nftData then
+    processRefund(fromAddress, amount, "Failed to generate NFT data: " .. (error or "unknown"), txId)
+    markTransactionProcessed(txId, {error = error})
+    return createErrorResponse("Mint failed: " .. (error or "unknown error"))
+  end
+  
+  -- Record mint and assignments
+  local success, mintError = recordMint(fromAddress, nftId)
+  if not success then
+    processRefund(fromAddress, amount, mintError, txId)
+    markTransactionProcessed(txId, {error = mintError})
+    return createErrorResponse(mintError)
+  end
+  
+  -- Record lucky number and market sentiment
+  recordLuckyNumber(nftId, nftData.lucky_number)
+  recordMarketSentiment(nftId, nftData.market_sentiment)
+  
+  -- Update revenue
+  local currentRevenue = tonumber(State.total_revenue) or 0
+  local paymentAmount = tonumber(amount) or 0
+  State.total_revenue = tostring(currentRevenue + paymentAmount)
+  State.revenue_records[nftId] = amount
+  
+  -- Mark transaction as successfully processed
+  markTransactionProcessed(txId, {
+    nft_id = nftId,
+    mint_success = true,
+    lucky_number = nftData.lucky_number,
+    sentiment = nftData.market_sentiment.ao_sentiment
+  })
+  
+  logInfo(string.format("Successful mint: NFT #%d to %s", nftId, fromAddress))
+  
+  return createSuccessResponse({
+    nft_id = nftId,
+    owner = fromAddress,
+    lucky_number = nftData.lucky_number,
+    market_sentiment = nftData.market_sentiment,
+    transaction_id = txId,
+    message = string.format("Successfully minted NFT #%d", nftId)
+  })
+end
+
+-- Get payment statistics
+local function getPaymentStats()
+  local stats = {
+    total_payments_received = 0,
+    total_revenue = State.total_revenue,
+    pending_refunds_count = 0,
+    pending_refunds_amount = "0",
+    processed_transactions = 0,
+    recent_payments = {}
+  }
+  
+  -- Count payments
+  for _, payment in pairs(State.payment_records) do
+    if payment.status == "received" then
+      stats.total_payments_received = stats.total_payments_received + 1
+      table.insert(stats.recent_payments, {
+        from = payment.from_address,
+        amount = payment.amount,
+        timestamp = payment.timestamp
+      })
+    end
+  end
+  
+  -- Count pending refunds
+  local totalPendingRefunds = 0
+  for address, amount in pairs(State.pending_refunds) do
+    local pendingAmount = tonumber(amount) or 0
+    if pendingAmount > 0 then
+      stats.pending_refunds_count = stats.pending_refunds_count + 1
+      totalPendingRefunds = totalPendingRefunds + pendingAmount
+    end
+  end
+  stats.pending_refunds_amount = tostring(totalPendingRefunds)
+  
+  -- Count processed transactions
+  for _, _ in pairs(State.processed_transactions) do
+    stats.processed_transactions = stats.processed_transactions + 1
+  end
+  
+  -- Sort recent payments by timestamp (most recent first)
+  table.sort(stats.recent_payments, function(a, b) return a.timestamp > b.timestamp end)
+  
+  -- Limit to last 10
+  if #stats.recent_payments > 10 then
+    local limited = {}
+    for i = 1, 10 do
+      limited[i] = stats.recent_payments[i]
+    end
+    stats.recent_payments = limited
+  end
+  
+  return stats
+end
+
+-- ============================================================================
 -- INITIALIZATION
 -- ============================================================================
 
@@ -1001,6 +1306,57 @@ if not State.initialized then
     logError("Process initialization failed")
   end
 end
+
+-- ============================================================================
+-- MESSAGE HANDLERS (Phase 3-1)
+-- ============================================================================
+
+-- Credit-Notice Handler for USDA payments
+Handlers.add("CreditNotice", Handlers.utils.hasMatchingTag("Action", "Credit-Notice"), function(msg)
+  logInfo("Credit-Notice received from: " .. (msg.From or "unknown"))
+  
+  -- Validate the credit notice
+  local isValid, paymentDetails = validateCreditNotice(msg)
+  if not isValid then
+    logError("Invalid Credit-Notice", {
+      from = msg.From,
+      action = msg.Action,
+      error = paymentDetails
+    })
+    return -- Ignore invalid credit notices
+  end
+  
+  logInfo("Processing payment from: " .. paymentDetails.from_address .. " Amount: " .. paymentDetails.amount)
+  
+  -- Process payment and mint
+  local result = processPaymentAndMint(paymentDetails)
+  
+  -- Send response back to the payer
+  if result.status == "success" then
+    ao.send({
+      Target = paymentDetails.from_address,
+      Action = "Mint-Success",
+      ["NFT-ID"] = tostring(result.data.nft_id),
+      ["Lucky-Number"] = tostring(result.data.lucky_number),
+      ["Market-Sentiment"] = result.data.market_sentiment.ao_sentiment,
+      ["Confidence-Score"] = tostring(result.data.market_sentiment.confidence_score),
+      ["Transaction-ID"] = paymentDetails.transaction_id,
+      Data = json.encode(result.data)
+    })
+    
+    logInfo("Mint success notification sent to: " .. paymentDetails.from_address)
+  else
+    ao.send({
+      Target = paymentDetails.from_address,
+      Action = "Mint-Error",
+      ["Error-Message"] = result.message,
+      ["Transaction-ID"] = paymentDetails.transaction_id,
+      Data = json.encode(result)
+    })
+    
+    logError("Mint error notification sent to: " .. paymentDetails.from_address .. " Error: " .. result.message)
+  end
+end)
 
 -- ============================================================================
 -- EXPORT MODULE (for testing and external access)
@@ -1054,6 +1410,16 @@ BeliefFiNFT = {
   getMarketSentimentForNFT = getMarketSentimentForNFT,
   getMarketSentimentStats = getMarketSentimentStats,
   generateNFTData = generateNFTData,
+  
+  -- Payment Processing functions (Phase 3-1)
+  validatePaymentAmount = validatePaymentAmount,
+  isTransactionProcessed = isTransactionProcessed,
+  recordPayment = recordPayment,
+  processRefund = processRefund,
+  getPaymentStatus = getPaymentStatus,
+  validateCreditNotice = validateCreditNotice,
+  processPaymentAndMint = processPaymentAndMint,
+  getPaymentStats = getPaymentStats,
   
   -- State access
   getState = function() return State end,
