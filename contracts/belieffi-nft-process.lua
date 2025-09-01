@@ -60,6 +60,43 @@ local LUCKY_NUMBERS = {
 }
 
 -- ============================================================================
+-- MARKET SENTIMENT CONFIGURATION (Phase 2-2)
+-- ============================================================================
+
+-- TODO: Replace with Apus Network integration in the future
+-- Hardcoded market sentiment patterns for MVP
+local SENTIMENT_PATTERNS = {
+  bearish = {
+    ao_sentiment = "bearish",
+    confidence_score = 0.73,
+    market_factors = {"regulatory_concerns", "market_volatility", "institutional_uncertainty"}
+  },
+  neutral = {
+    ao_sentiment = "neutral",
+    confidence_score = 0.65,
+    market_factors = {"market_uncertainty", "mixed_signals", "consolidation_phase"}
+  },
+  bullish = {
+    ao_sentiment = "bullish",
+    confidence_score = 0.85,
+    market_factors = {"institutional_adoption", "developer_activity", "ecosystem_expansion"}
+  },
+  very_bullish = {
+    ao_sentiment = "very_bullish",
+    confidence_score = 0.92,
+    market_factors = {"ecosystem_growth", "token_utility", "mass_adoption", "technological_breakthrough"}
+  }
+}
+
+-- Sentiment selection ranges based on lucky number
+local SENTIMENT_RANGES = {
+  {min = 0,   max = 199, sentiment = "bearish"},
+  {min = 200, max = 399, sentiment = "neutral"},
+  {min = 400, max = 699, sentiment = "bullish"},
+  {min = 700, max = 999, sentiment = "very_bullish"}
+}
+
+-- ============================================================================
 -- GLOBAL STATE INITIALIZATION
 -- ============================================================================
 
@@ -95,6 +132,15 @@ State.pending_refunds = State.pending_refunds or {} -- address -> amount
 -- Lucky Number Management (Phase 2-1)
 State.lucky_numbers_assigned = State.lucky_numbers_assigned or {} -- nft_id -> lucky_number
 State.current_lucky_index = State.current_lucky_index or 1 -- Next index to use from LUCKY_NUMBERS
+
+-- Market Sentiment Management (Phase 2-2)
+State.market_sentiments = State.market_sentiments or {} -- nft_id -> market_sentiment
+State.sentiment_statistics = State.sentiment_statistics or {
+  bearish = 0,
+  neutral = 0,
+  bullish = 0,
+  very_bullish = 0
+}
 
 -- Process Information
 State.process_owner = State.process_owner or ao.id
@@ -711,6 +757,209 @@ local function previewNextLuckyNumber()
 end
 
 -- ============================================================================
+-- MARKET SENTIMENT FUNCTIONS (Phase 2-2)
+-- ============================================================================
+
+-- Initialize sentiment patterns (called on process start)
+local function initializeSentimentPatterns()
+  -- TODO: Replace with Apus Network integration in the future
+  -- Currently using hardcoded patterns
+  logInfo("Market Sentiment patterns initialized with hardcoded data (MVP)")
+  logInfo("Sentiment patterns: " .. json.encode({"bearish", "neutral", "bullish", "very_bullish"}))
+  
+  -- Validate sentiment patterns
+  for sentimentType, pattern in pairs(SENTIMENT_PATTERNS) do
+    if not pattern.ao_sentiment or not pattern.confidence_score or not pattern.market_factors then
+      logError("Invalid sentiment pattern", {sentiment_type = sentimentType})
+      return false
+    end
+  end
+  
+  -- Initialize sentiment statistics if not exists
+  State.sentiment_statistics = State.sentiment_statistics or {
+    bearish = 0,
+    neutral = 0,
+    bullish = 0,
+    very_bullish = 0
+  }
+  
+  return true
+end
+
+-- Get sentiment type based on lucky number
+local function getSentimentByLuckyNumber(luckyNumber)
+  -- Validate input
+  if not luckyNumber or luckyNumber < 0 or luckyNumber > 999 then
+    logError("Invalid lucky number for sentiment", {lucky_number = luckyNumber})
+    return nil
+  end
+  
+  -- Find matching range
+  for _, range in ipairs(SENTIMENT_RANGES) do
+    if luckyNumber >= range.min and luckyNumber <= range.max then
+      return range.sentiment
+    end
+  end
+  
+  -- Default fallback (should not happen with valid input)
+  logError("No sentiment range found for lucky number", {lucky_number = luckyNumber})
+  return "neutral"
+end
+
+-- Generate complete market sentiment object
+local function generateMarketSentiment(luckyNumber)
+  -- Get sentiment type based on lucky number
+  local sentimentType = getSentimentByLuckyNumber(luckyNumber)
+  if not sentimentType then
+    return nil
+  end
+  
+  -- Get pattern for this sentiment
+  local pattern = SENTIMENT_PATTERNS[sentimentType]
+  if not pattern then
+    logError("No pattern found for sentiment type", {sentiment_type = sentimentType})
+    return nil
+  end
+  
+  -- Create market sentiment object
+  local marketSentiment = {
+    ao_sentiment = pattern.ao_sentiment,
+    confidence_score = pattern.confidence_score,
+    analysis_timestamp = getCurrentTimestamp(),
+    market_factors = {},
+    sentiment_source = "Powered by Apus Network",
+    lucky_number_basis = luckyNumber
+  }
+  
+  -- Copy market factors (deep copy)
+  for _, factor in ipairs(pattern.market_factors) do
+    table.insert(marketSentiment.market_factors, factor)
+  end
+  
+  return marketSentiment
+end
+
+-- Format sentiment data for display/API
+local function formatSentimentData(marketSentiment)
+  if not marketSentiment then
+    return nil
+  end
+  
+  return {
+    sentiment = marketSentiment.ao_sentiment,
+    confidence = string.format("%.1f%%", marketSentiment.confidence_score * 100),
+    timestamp = marketSentiment.analysis_timestamp,
+    factors = table.concat(marketSentiment.market_factors, ", "),
+    source = marketSentiment.sentiment_source,
+    raw = marketSentiment
+  }
+end
+
+-- Record market sentiment assignment for an NFT
+local function recordMarketSentiment(nftId, marketSentiment)
+  -- Validate inputs
+  if not nftId or nftId <= 0 or nftId > MAX_SUPPLY then
+    logError("Invalid NFT ID for market sentiment", {nft_id = nftId})
+    return false
+  end
+  
+  if not marketSentiment or not marketSentiment.ao_sentiment then
+    logError("Invalid market sentiment object", {market_sentiment = marketSentiment})
+    return false
+  end
+  
+  -- Check if already assigned
+  if State.market_sentiments[nftId] then
+    logError("Market sentiment already assigned", {
+      nft_id = nftId,
+      existing_sentiment = State.market_sentiments[nftId].ao_sentiment
+    })
+    return false
+  end
+  
+  -- Record the assignment
+  State.market_sentiments[nftId] = marketSentiment
+  
+  -- Update statistics
+  local sentimentType = marketSentiment.ao_sentiment
+  if State.sentiment_statistics[sentimentType] then
+    State.sentiment_statistics[sentimentType] = State.sentiment_statistics[sentimentType] + 1
+  end
+  
+  logInfo(string.format("Market sentiment '%s' assigned to NFT #%d", sentimentType, nftId))
+  
+  return true
+end
+
+-- Get market sentiment for a specific NFT
+local function getMarketSentimentForNFT(nftId)
+  return State.market_sentiments[nftId]
+end
+
+-- Get market sentiment statistics
+local function getMarketSentimentStats()
+  local stats = {
+    total_assigned = 0,
+    distribution = {},
+    recent_sentiments = {}
+  }
+  
+  -- Calculate distribution
+  for sentimentType, count in pairs(State.sentiment_statistics) do
+    stats.total_assigned = stats.total_assigned + count
+    stats.distribution[sentimentType] = {
+      count = count,
+      percentage = 0  -- Will calculate after total is known
+    }
+  end
+  
+  -- Calculate percentages
+  if stats.total_assigned > 0 then
+    for sentimentType, data in pairs(stats.distribution) do
+      data.percentage = (data.count / stats.total_assigned) * 100
+    end
+  end
+  
+  -- Get recent sentiment assignments
+  local recentCount = 0
+  for nftId = math.max(1, State.total_minted - 9), State.total_minted do
+    local sentiment = State.market_sentiments[nftId]
+    if sentiment then
+      table.insert(stats.recent_sentiments, {
+        nft_id = nftId,
+        sentiment = sentiment.ao_sentiment,
+        confidence = sentiment.confidence_score
+      })
+      recentCount = recentCount + 1
+    end
+  end
+  
+  return stats
+end
+
+-- Generate sentiment and lucky number combination for minting
+local function generateNFTData(nftId)
+  -- Generate lucky number
+  local luckyNumber = getNextLuckyNumber()
+  if not luckyNumber then
+    return nil, "No lucky number available"
+  end
+  
+  -- Generate market sentiment based on lucky number
+  local marketSentiment = generateMarketSentiment(luckyNumber)
+  if not marketSentiment then
+    return nil, "Failed to generate market sentiment"
+  end
+  
+  -- Return combined data
+  return {
+    nft_id = nftId,
+    lucky_number = luckyNumber,
+    market_sentiment = marketSentiment
+  }, nil
+end
+
+-- ============================================================================
 -- INITIALIZATION
 -- ============================================================================
 
@@ -726,6 +975,13 @@ local function initializeProcess()
   local luckyInit = initializeLuckyNumbers()
   if not luckyInit then
     logError("Failed to initialize Lucky Numbers")
+    return false
+  end
+  
+  -- Initialize Market Sentiment Patterns
+  local sentimentInit = initializeSentimentPatterns()
+  if not sentimentInit then
+    logError("Failed to initialize Market Sentiment patterns")
     return false
   end
   
@@ -788,6 +1044,16 @@ BeliefFiNFT = {
   getLuckyNumberForNFT = getLuckyNumberForNFT,
   getLuckyNumberStats = getLuckyNumberStats,
   previewNextLuckyNumber = previewNextLuckyNumber,
+  
+  -- Market Sentiment functions (Phase 2-2)
+  initializeSentimentPatterns = initializeSentimentPatterns,
+  getSentimentByLuckyNumber = getSentimentByLuckyNumber,
+  generateMarketSentiment = generateMarketSentiment,
+  formatSentimentData = formatSentimentData,
+  recordMarketSentiment = recordMarketSentiment,
+  getMarketSentimentForNFT = getMarketSentimentForNFT,
+  getMarketSentimentStats = getMarketSentimentStats,
+  generateNFTData = generateNFTData,
   
   -- State access
   getState = function() return State end,
