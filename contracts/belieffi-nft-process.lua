@@ -328,6 +328,246 @@ local function getPublicMintConfig()
 end
 
 -- ============================================================================
+-- MINT LIMITATION MANAGEMENT (Phase 1-3)
+-- ============================================================================
+
+-- Check detailed mint eligibility for an address
+local function checkMintEligibility(address)
+  local eligibility = {
+    address = address,
+    eligible = false,
+    reason = "",
+    checks = {}
+  }
+  
+  -- Check 1: Valid address format
+  eligibility.checks.valid_address = isValidAddress(address)
+  if not eligibility.checks.valid_address then
+    eligibility.reason = "Invalid address format"
+    return eligibility
+  end
+  
+  -- Check 2: Global minting enabled
+  eligibility.checks.mint_enabled = State.mint_enabled
+  if not eligibility.checks.mint_enabled then
+    eligibility.reason = "Minting is currently disabled"
+    return eligibility
+  end
+  
+  -- Check 3: Public mint enabled
+  eligibility.checks.public_mint_enabled = checkPublicMintEnabled()
+  if not eligibility.checks.public_mint_enabled then
+    eligibility.reason = "Public mint is not available"
+    return eligibility
+  end
+  
+  -- Check 4: Address hasn't already minted (1 per address limit)
+  eligibility.checks.not_minted = not (State.minted_by_address[address] or false)
+  if not eligibility.checks.not_minted then
+    eligibility.reason = "Address has already minted 1 NFT (maximum allowed)"
+    return eligibility
+  end
+  
+  -- Check 5: Supply available
+  eligibility.checks.supply_available = State.total_minted < MAX_SUPPLY
+  if not eligibility.checks.supply_available then
+    eligibility.reason = string.format("All NFTs sold out (%d/%d minted)", MAX_SUPPLY, MAX_SUPPLY)
+    return eligibility
+  end
+  
+  -- All checks passed
+  eligibility.eligible = true
+  eligibility.reason = "Address is eligible to mint"
+  eligibility.remaining_supply = getRemainingSupply()
+  eligibility.mint_price = MINT_PRICE
+  
+  return eligibility
+end
+
+-- Record a successful mint for an address
+local function recordMint(address, nftId)
+  -- Validate inputs
+  if not isValidAddress(address) then
+    logError("Invalid address in recordMint", {address = address})
+    return false, "Invalid address"
+  end
+  
+  if not nftId or nftId <= 0 or nftId > MAX_SUPPLY then
+    logError("Invalid NFT ID in recordMint", {nftId = nftId})
+    return false, "Invalid NFT ID"
+  end
+  
+  -- Check if already minted
+  if State.minted_by_address[address] then
+    logError("Address already minted", {address = address})
+    return false, "Address has already minted"
+  end
+  
+  -- Record the mint
+  State.minted_by_address[address] = true
+  State.nft_owners[nftId] = address
+  
+  -- Update balances
+  initializeBalance(address)
+  State.nft_balances[address] = 1  -- Always exactly 1 NFT per address
+  
+  -- Update global counters
+  State.total_minted = State.total_minted + 1
+  State.remaining_supply = MAX_SUPPLY - State.total_minted
+  
+  -- Add to NFT IDs list
+  table.insert(State.nft_ids, nftId)
+  
+  -- Log the successful mint
+  logInfo(string.format("Mint recorded: NFT #%d to address %s", nftId, address))
+  
+  return true, "Mint successfully recorded"
+end
+
+-- Get comprehensive mint status
+local function getMintStatusDetailed()
+  local status = {
+    -- Supply information
+    supply = {
+      maximum = MAX_SUPPLY,
+      minted = State.total_minted,
+      remaining = getRemainingSupply(),
+      percentage_minted = (State.total_minted / MAX_SUPPLY) * 100
+    },
+    
+    -- Mint configuration
+    configuration = {
+      price = MINT_PRICE,
+      price_token = "USDA",
+      limit_per_address = MINT_LIMIT_PER_ADDRESS,
+      public_mint = checkPublicMintEnabled(),
+      mint_enabled = State.mint_enabled
+    },
+    
+    -- Current state
+    state = {
+      status = "inactive",
+      accepting_mints = false,
+      message = ""
+    },
+    
+    -- Statistics
+    statistics = {
+      unique_holders = 0,
+      last_mint_id = nil
+    }
+  }
+  
+  -- Calculate unique holders
+  for address, _ in pairs(State.minted_by_address) do
+    status.statistics.unique_holders = status.statistics.unique_holders + 1
+  end
+  
+  -- Get last minted NFT ID
+  if #State.nft_ids > 0 then
+    status.statistics.last_mint_id = State.nft_ids[#State.nft_ids]
+  end
+  
+  -- Determine current state
+  if State.total_minted >= MAX_SUPPLY then
+    status.state.status = "sold_out"
+    status.state.accepting_mints = false
+    status.state.message = "All NFTs have been minted"
+  elseif not State.mint_enabled then
+    status.state.status = "paused"
+    status.state.accepting_mints = false
+    status.state.message = "Minting is temporarily paused"
+  else
+    status.state.status = "active"
+    status.state.accepting_mints = true
+    status.state.message = string.format("Minting is open (%d NFTs remaining)", getRemainingSupply())
+  end
+  
+  return status
+end
+
+-- Enhanced validation for mint requests with detailed checks
+local function validateMintRequestDetailed(address, amount)
+  local validation = {
+    valid = false,
+    address = address,
+    amount = amount,
+    errors = {},
+    warnings = {}
+  }
+  
+  -- Check address format
+  if not isValidAddress(address) then
+    table.insert(validation.errors, "Invalid address format")
+  end
+  
+  -- Check amount (if provided)
+  if amount then
+    local numAmount = safeToNumber(amount)
+    if numAmount ~= safeToNumber(MINT_PRICE) then
+      table.insert(validation.errors, string.format("Incorrect payment amount. Required: %s USDA", MINT_PRICE))
+    end
+  end
+  
+  -- Check mint eligibility
+  local eligibility = checkMintEligibility(address)
+  if not eligibility.eligible then
+    table.insert(validation.errors, eligibility.reason)
+  end
+  
+  -- Add warnings if close to limits
+  if State.total_minted >= MAX_SUPPLY - 10 then
+    table.insert(validation.warnings, string.format("Low supply warning: Only %d NFTs remaining", getRemainingSupply()))
+  end
+  
+  -- Set overall validation status
+  validation.valid = #validation.errors == 0
+  
+  return validation
+end
+
+-- Get mint history for tracking
+local function getMintHistory(limit)
+  limit = limit or 10
+  local history = {
+    total_mints = State.total_minted,
+    recent_mints = {},
+    addresses_minted = {}
+  }
+  
+  -- Get recent NFT IDs
+  local startIdx = math.max(1, #State.nft_ids - limit + 1)
+  for i = startIdx, #State.nft_ids do
+    local nftId = State.nft_ids[i]
+    local owner = State.nft_owners[nftId]
+    table.insert(history.recent_mints, {
+      nft_id = nftId,
+      owner = owner,
+      index = i
+    })
+  end
+  
+  -- Get list of addresses that have minted
+  for address, _ in pairs(State.minted_by_address) do
+    table.insert(history.addresses_minted, address)
+  end
+  
+  return history
+end
+
+-- Check if we're at or near supply limits
+local function checkSupplyLimits()
+  local limits = {
+    at_maximum = State.total_minted >= MAX_SUPPLY,
+    near_maximum = State.total_minted >= MAX_SUPPLY * 0.9,  -- 90% threshold
+    remaining = getRemainingSupply(),
+    percentage_remaining = (getRemainingSupply() / MAX_SUPPLY) * 100
+  }
+  
+  return limits
+end
+
+-- ============================================================================
 -- INITIALIZATION
 -- ============================================================================
 
@@ -377,6 +617,14 @@ BeliefFiNFT = {
   getMintStatus = getMintStatus,
   getPublicMintConfig = getPublicMintConfig,
   toggleMinting = toggleMinting,
+  
+  -- Mint Limitation functions (Phase 1-3)
+  checkMintEligibility = checkMintEligibility,
+  recordMint = recordMint,
+  getMintStatusDetailed = getMintStatusDetailed,
+  validateMintRequestDetailed = validateMintRequestDetailed,
+  getMintHistory = getMintHistory,
+  checkSupplyLimits = checkSupplyLimits,
   
   -- State access
   getState = function() return State end,
