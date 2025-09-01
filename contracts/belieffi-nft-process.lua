@@ -1184,11 +1184,12 @@ local function processPaymentAndMint(paymentDetails)
   recordLuckyNumber(nftId, nftData.lucky_number)
   recordMarketSentiment(nftId, nftData.market_sentiment)
   
-  -- Update revenue
-  local currentRevenue = tonumber(State.total_revenue) or 0
-  local paymentAmount = tonumber(amount) or 0
-  State.total_revenue = tostring(currentRevenue + paymentAmount)
-  State.revenue_records[nftId] = amount
+  -- Record revenue using enhanced function
+  local revenueSuccess, revenueError = recordRevenue(nftId, amount)
+  if not revenueSuccess then
+    logError("Failed to record revenue", {nft_id = nftId, error = revenueError})
+    -- Continue anyway as mint was successful
+  end
   
   -- Mark transaction as successfully processed
   markTransactionProcessed(txId, {
@@ -1262,6 +1263,247 @@ local function getPaymentStats()
   end
   
   return stats
+end
+
+-- ============================================================================
+-- FUND MANAGEMENT FUNCTIONS (Phase 3-2 - MVP Simplified)
+-- ============================================================================
+
+-- Record revenue from a successful mint
+local function recordRevenue(nftId, amount)
+  -- Validate inputs
+  if not nftId or nftId <= 0 or nftId > MAX_SUPPLY then
+    logError("Invalid NFT ID for revenue recording", {nft_id = nftId})
+    return false, "Invalid NFT ID"
+  end
+  
+  if not amount or tonumber(amount) <= 0 then
+    logError("Invalid revenue amount", {amount = amount})
+    return false, "Invalid amount"
+  end
+  
+  -- Check if already recorded
+  if State.revenue_records[nftId] then
+    logError("Revenue already recorded for NFT", {nft_id = nftId})
+    return false, "Revenue already recorded"
+  end
+  
+  -- Record revenue for this NFT
+  State.revenue_records[nftId] = amount
+  
+  -- Update total revenue
+  local currentTotal = tonumber(State.total_revenue) or 0
+  local revenueAmount = tonumber(amount) or 0
+  State.total_revenue = tostring(currentTotal + revenueAmount)
+  
+  -- Update process balance (in-process fund management)
+  local currentBalance = tonumber(State.process_balance) or 0
+  State.process_balance = tostring(currentBalance + revenueAmount)
+  
+  logInfo(string.format("Revenue recorded: %s USDA for NFT #%d (Total: %s USDA)", amount, nftId, State.total_revenue))
+  
+  return true, "Revenue recorded successfully"
+end
+
+-- Get current process balance
+local function getProcessBalance()
+  return {
+    balance = State.process_balance or "0",
+    balance_usda = tonumber(State.process_balance) or 0,
+    total_revenue = State.total_revenue or "0",
+    total_revenue_usda = tonumber(State.total_revenue) or 0,
+    currency = "USDA"
+  }
+end
+
+-- Enhanced refund processing with balance management
+local function processRefundEnhanced(toAddress, amount, reason, originalTxId)
+  -- Validate inputs
+  if not isValidAddress(toAddress) then
+    logError("Invalid address for refund", {address = toAddress})
+    return false, "Invalid address"
+  end
+  
+  local refundAmount = tonumber(amount) or 0
+  if refundAmount <= 0 then
+    logError("Invalid refund amount", {amount = amount})
+    return false, "Invalid amount"
+  end
+  
+  -- Check if we have sufficient balance for refund
+  local currentBalance = tonumber(State.process_balance) or 0
+  if currentBalance < refundAmount then
+    logError("Insufficient balance for refund", {
+      required = refundAmount,
+      available = currentBalance
+    })
+    return false, "Insufficient balance"
+  end
+  
+  -- Create refund record
+  local refundInfo = {
+    to_address = toAddress,
+    amount = amount,
+    reason = reason or "Refund",
+    original_transaction = originalTxId,
+    refund_timestamp = getCurrentTimestamp(),
+    status = "processing"
+  }
+  
+  -- Update pending refunds
+  State.pending_refunds[toAddress] = (State.pending_refunds[toAddress] or "0")
+  local currentPending = tonumber(State.pending_refunds[toAddress]) or 0
+  State.pending_refunds[toAddress] = tostring(currentPending + refundAmount)
+  
+  -- Deduct from process balance
+  State.process_balance = tostring(currentBalance - refundAmount)
+  
+  -- Send refund message
+  local success, error = pcall(function()
+    ao.send({
+      Target = USDA_PROCESS_ID,
+      Action = "Transfer",
+      Recipient = toAddress,
+      Quantity = amount,
+      ["X-Reason"] = reason,
+      ["X-Original-TX"] = originalTxId or "",
+      ["X-Refund-Type"] = "automated"
+    })
+  end)
+  
+  if not success then
+    -- Restore balance if send failed
+    State.process_balance = tostring(currentBalance)
+    logError("Failed to send refund", {error = error})
+    return false, "Refund failed"
+  end
+  
+  -- Record successful refund
+  refundInfo.status = "sent"
+  local refundTxId = (originalTxId or "manual") .. "_refund_" .. os.time()
+  State.refund_history[refundTxId] = refundInfo
+  
+  logInfo(string.format("Enhanced refund processed: %s USDA to %s (Balance: %s USDA)", 
+    amount, toAddress, State.process_balance))
+  
+  return true, "Refund processed successfully"
+end
+
+-- Generate comprehensive revenue report
+local function getRevenueReport()
+  local report = {
+    summary = {
+      total_revenue = State.total_revenue or "0",
+      total_revenue_usda = tonumber(State.total_revenue) or 0,
+      process_balance = State.process_balance or "0",
+      process_balance_usda = tonumber(State.process_balance) or 0,
+      nfts_sold = 0,
+      average_revenue_per_nft = 0
+    },
+    revenue_by_nft = {},
+    refund_summary = {
+      total_refunds_issued = 0,
+      total_refund_amount = "0",
+      pending_refunds = 0,
+      pending_refund_amount = "0"
+    },
+    timestamp = getCurrentTimestamp()
+  }
+  
+  -- Calculate NFT revenue details
+  for nftId, amount in pairs(State.revenue_records) do
+    report.summary.nfts_sold = report.summary.nfts_sold + 1
+    table.insert(report.revenue_by_nft, {
+      nft_id = nftId,
+      revenue = amount,
+      revenue_usda = tonumber(amount) or 0,
+      owner = State.nft_owners[nftId]
+    })
+  end
+  
+  -- Calculate average revenue per NFT
+  if report.summary.nfts_sold > 0 then
+    report.summary.average_revenue_per_nft = report.summary.total_revenue_usda / report.summary.nfts_sold
+  end
+  
+  -- Sort revenue by NFT ID
+  table.sort(report.revenue_by_nft, function(a, b) return a.nft_id < b.nft_id end)
+  
+  -- Calculate refund statistics
+  local totalRefunds = 0
+  local totalRefundAmount = 0
+  for _, refund in pairs(State.refund_history) do
+    if refund.status == "sent" then
+      totalRefunds = totalRefunds + 1
+      totalRefundAmount = totalRefundAmount + (tonumber(refund.amount) or 0)
+    end
+  end
+  
+  report.refund_summary.total_refunds_issued = totalRefunds
+  report.refund_summary.total_refund_amount = tostring(totalRefundAmount)
+  
+  -- Calculate pending refunds
+  local pendingRefunds = 0
+  local pendingAmount = 0
+  for address, amount in pairs(State.pending_refunds) do
+    local pending = tonumber(amount) or 0
+    if pending > 0 then
+      pendingRefunds = pendingRefunds + 1
+      pendingAmount = pendingAmount + pending
+    end
+  end
+  
+  report.refund_summary.pending_refunds = pendingRefunds
+  report.refund_summary.pending_refund_amount = tostring(pendingAmount)
+  
+  return report
+end
+
+-- Get fund management status
+local function getFundManagementStatus()
+  local status = {
+    mode = "in_process_management",  -- MVP mode
+    smart_wallet_enabled = false,   -- Disabled in MVP
+    balance_info = getProcessBalance(),
+    revenue_info = {
+      total_collected = State.total_revenue or "0",
+      nfts_generating_revenue = 0,
+      last_revenue_nft = nil
+    },
+    refund_info = {
+      total_refunded = "0",
+      refunds_processed = 0,
+      pending_refunds = 0
+    }
+  }
+  
+  -- Count revenue-generating NFTs
+  for nftId, _ in pairs(State.revenue_records) do
+    status.revenue_info.nfts_generating_revenue = status.revenue_info.nfts_generating_revenue + 1
+    status.revenue_info.last_revenue_nft = math.max(status.revenue_info.last_revenue_nft or 0, nftId)
+  end
+  
+  -- Calculate refund totals
+  local totalRefunded = 0
+  local refundsProcessed = 0
+  for _, refund in pairs(State.refund_history) do
+    if refund.status == "sent" then
+      totalRefunded = totalRefunded + (tonumber(refund.amount) or 0)
+      refundsProcessed = refundsProcessed + 1
+    end
+  end
+  
+  status.refund_info.total_refunded = tostring(totalRefunded)
+  status.refund_info.refunds_processed = refundsProcessed
+  
+  -- Count pending refunds
+  for _, amount in pairs(State.pending_refunds) do
+    if (tonumber(amount) or 0) > 0 then
+      status.refund_info.pending_refunds = status.refund_info.pending_refunds + 1
+    end
+  end
+  
+  return status
 end
 
 -- ============================================================================
@@ -1420,6 +1662,13 @@ BeliefFiNFT = {
   validateCreditNotice = validateCreditNotice,
   processPaymentAndMint = processPaymentAndMint,
   getPaymentStats = getPaymentStats,
+  
+  -- Fund Management functions (Phase 3-2)
+  recordRevenue = recordRevenue,
+  getProcessBalance = getProcessBalance,
+  processRefundEnhanced = processRefundEnhanced,
+  getRevenueReport = getRevenueReport,
+  getFundManagementStatus = getFundManagementStatus,
   
   -- State access
   getState = function() return State end,
