@@ -696,6 +696,13 @@ end
 
 -- Get the next lucky number for minting
 local function getNextLuckyNumber()
+  -- Debug logging
+  logInfo("getNextLuckyNumber called", {
+    current_index = State.current_lucky_index,
+    max_index = #LUCKY_NUMBERS,
+    lucky_numbers_length = #LUCKY_NUMBERS
+  })
+  
   -- Check if we have remaining lucky numbers
   if State.current_lucky_index > #LUCKY_NUMBERS then
     logError("No more lucky numbers available", {
@@ -708,8 +715,13 @@ local function getNextLuckyNumber()
   -- Get the lucky number at current index
   local luckyNumber = LUCKY_NUMBERS[State.current_lucky_index]
   
+  logInfo("Retrieved lucky number", {
+    index = State.current_lucky_index,
+    lucky_number = luckyNumber
+  })
+  
   -- Validate lucky number is in range
-  if luckyNumber < 0 or luckyNumber > 999 then
+  if not luckyNumber or luckyNumber < 0 or luckyNumber > 999 then
     logError("Lucky number out of range", {
       lucky_number = luckyNumber,
       index = State.current_lucky_index
@@ -719,6 +731,11 @@ local function getNextLuckyNumber()
   
   -- Increment index for next use
   State.current_lucky_index = State.current_lucky_index + 1
+  
+  logInfo("Lucky number generation successful", {
+    lucky_number = luckyNumber,
+    next_index = State.current_lucky_index
+  })
   
   return luckyNumber
 end
