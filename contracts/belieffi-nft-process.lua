@@ -1804,7 +1804,7 @@ local function updateMetadata(nftId, updates)
   
   -- Apply allowed updates
   for key, value in pairs(updates) do
-    if not table.contains(allowedUpdates, key) then
+    if not table_contains(allowedUpdates, key) then
       logError("Update not allowed for field", {field = key})
       return false, "Field update not allowed: " .. key
     end
@@ -1826,7 +1826,7 @@ local function updateMetadata(nftId, updates)
 end
 
 -- Helper function to check if table contains value
-local function table.contains(table, value)
+local function table_contains(table, value)
   for _, v in pairs(table) do
     if v == value then
       return true
@@ -2004,7 +2004,7 @@ local function recordMintSuccess(nftId, owner, timestamp)
   }
   
   -- Add to mint history (we can use nft_ids array for this)
-  if not table.contains(State.nft_ids, nftId) then
+  if not table_contains(State.nft_ids, nftId) then
     table.insert(State.nft_ids, nftId)
   end
   
@@ -2442,7 +2442,7 @@ Handlers.add("Balances", Handlers.utils.hasMatchingTag("Action", "Balances"), fu
     end
   end
   
-  logInfo("Balances request processed", {total_holders = table.getn(balances)})
+  logInfo("Balances request processed", {total_holders = table_getn(balances)})
   
   ao.send({
     Target = msg.From,
@@ -2499,7 +2499,7 @@ Handlers.add("Metadata", Handlers.utils.hasMatchingTag("Action", "Metadata"), fu
 end)
 
 -- Helper function to get table length (Lua doesn't have built-in length for hash tables)
-local function table.getn(t)
+local function table_getn(t)
   local count = 0
   for _ in pairs(t) do count = count + 1 end
   return count
