@@ -1,0 +1,4 @@
+# AstroUSD (USDA)
+
+- Process ID: FBt9A5GA_KXMMSxA2DJ0xZbAq8sLLU2ak-YJe9zDvg8
+- 1 USDA = 1000000000000 units
