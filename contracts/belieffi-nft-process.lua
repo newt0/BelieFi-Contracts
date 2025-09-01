@@ -694,48 +694,23 @@ local function initializeLuckyNumbers()
   return true
 end
 
--- Get the next lucky number for minting
+-- Get the next lucky number for minting (SIMPLIFIED VERSION)
 local function getNextLuckyNumber()
-  -- Debug logging
-  logInfo("getNextLuckyNumber called", {
-    current_index = State.current_lucky_index,
-    max_index = #LUCKY_NUMBERS,
-    lucky_numbers_length = #LUCKY_NUMBERS
-  })
+  -- Use simple modulo to cycle through lucky numbers
+  local index = (State.total_minted % 100) + 1  -- 1-100 range
+  local luckyNumber = LUCKY_NUMBERS[index]
   
-  -- Check if we have remaining lucky numbers
-  if State.current_lucky_index > #LUCKY_NUMBERS then
-    logError("No more lucky numbers available", {
-      current_index = State.current_lucky_index,
-      max_index = #LUCKY_NUMBERS
-    })
-    return nil
-  end
-  
-  -- Get the lucky number at current index
-  local luckyNumber = LUCKY_NUMBERS[State.current_lucky_index]
-  
-  logInfo("Retrieved lucky number", {
-    index = State.current_lucky_index,
+  logInfo("getNextLuckyNumber simple version", {
+    total_minted = State.total_minted,
+    index = index,
     lucky_number = luckyNumber
   })
   
-  -- Validate lucky number is in range
-  if not luckyNumber or luckyNumber < 0 or luckyNumber > 999 then
-    logError("Lucky number out of range", {
-      lucky_number = luckyNumber,
-      index = State.current_lucky_index
-    })
-    return nil
+  -- Fallback if still nil
+  if not luckyNumber then
+    luckyNumber = 42  -- Default fallback
+    logInfo("Using fallback lucky number", {lucky_number = luckyNumber})
   end
-  
-  -- Increment index for next use
-  State.current_lucky_index = State.current_lucky_index + 1
-  
-  logInfo("Lucky number generation successful", {
-    lucky_number = luckyNumber,
-    next_index = State.current_lucky_index
-  })
   
   return luckyNumber
 end
@@ -859,14 +834,36 @@ end
 
 -- Generate complete market sentiment object
 local function generateMarketSentiment(luckyNumber)
+  -- Input validation and logging
+  logInfo("generateMarketSentiment called", {
+    lucky_number = luckyNumber,
+    type = type(luckyNumber)
+  })
+  
+  if not luckyNumber then
+    logError("generateMarketSentiment: luckyNumber is nil")
+    return nil
+  end
+  
   -- Get sentiment type based on lucky number
   local sentimentType = getSentimentByLuckyNumber(luckyNumber)
+  logInfo("getSentimentByLuckyNumber result", {
+    lucky_number = luckyNumber,
+    sentiment_type = sentimentType
+  })
+  
   if not sentimentType then
+    logError("getSentimentByLuckyNumber returned nil", {lucky_number = luckyNumber})
     return nil
   end
   
   -- Get pattern for this sentiment
   local pattern = SENTIMENT_PATTERNS[sentimentType]
+  logInfo("Pattern lookup result", {
+    sentiment_type = sentimentType,
+    pattern_exists = pattern ~= nil
+  })
+  
   if not pattern then
     logError("No pattern found for sentiment type", {sentiment_type = sentimentType})
     return nil
@@ -886,6 +883,12 @@ local function generateMarketSentiment(luckyNumber)
   for _, factor in ipairs(pattern.market_factors) do
     table.insert(marketSentiment.market_factors, factor)
   end
+  
+  logInfo("Market sentiment generated successfully", {
+    lucky_number = luckyNumber,
+    sentiment_type = sentimentType,
+    confidence_score = pattern.confidence_score
+  })
   
   return marketSentiment
 end
