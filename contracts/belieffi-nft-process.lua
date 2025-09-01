@@ -97,6 +97,34 @@ local SENTIMENT_RANGES = {
 }
 
 -- ============================================================================
+-- NFT METADATA CONFIGURATION (Phase 4-1)
+-- ============================================================================
+
+-- Base metadata template
+local METADATA_TEMPLATE = {
+  name = "", -- Will be set dynamically
+  description = "Believing in AO's growth",
+  strategy = "Maximize $AO",
+  image = "https://arweave.net/belieffi-ao-maxi-image-placeholder", -- TODO: Update with actual image URL
+  external_url = "", -- Will be set dynamically
+  collection = {
+    name = "BeliefFi DeFAI NFT Collection",
+    family = "AO MAXI"
+  }
+}
+
+-- Metadata validation rules
+local VALIDATION_RULES = {
+  required_fields = {"name", "description", "strategy", "image", "lucky_number", "market_sentiment", "attributes"},
+  numeric_ranges = {
+    lucky_number = {min = 0, max = 999}
+  },
+  string_patterns = {
+    name = "^AO MAXI #%d%d%d$"
+  }
+}
+
+-- ============================================================================
 -- GLOBAL STATE INITIALIZATION
 -- ============================================================================
 
@@ -1184,6 +1212,19 @@ local function processPaymentAndMint(paymentDetails)
   recordLuckyNumber(nftId, nftData.lucky_number)
   recordMarketSentiment(nftId, nftData.market_sentiment)
   
+  -- Generate and store NFT metadata
+  local metadata, metadataError = generateNFTMetadata(nftId, fromAddress, nftData.lucky_number, nftData.market_sentiment)
+  if metadata then
+    local metadataStored, storeError = storeNFTMetadata(nftId, metadata)
+    if not metadataStored then
+      logError("Failed to store metadata", {nft_id = nftId, error = storeError})
+      -- Continue anyway as mint was successful
+    end
+  else
+    logError("Failed to generate metadata", {nft_id = nftId, error = metadataError})
+    -- Continue anyway as mint was successful
+  end
+  
   -- Record revenue using enhanced function
   local revenueSuccess, revenueError = recordRevenue(nftId, amount)
   if not revenueSuccess then
@@ -1507,6 +1548,388 @@ local function getFundManagementStatus()
 end
 
 -- ============================================================================
+-- NFT METADATA MANAGEMENT FUNCTIONS (Phase 4-1)
+-- ============================================================================
+
+-- Format number with zero padding
+local function formatNumberWithZeroPad(number, digits)
+  local str = tostring(number)
+  while #str < digits do
+    str = "0" .. str
+  end
+  return str
+end
+
+-- Generate NFT name with padded ID
+local function generateNFTName(nftId)
+  return "AO MAXI #" .. formatNumberWithZeroPad(nftId, 3)
+end
+
+-- Generate external URL for NFT
+local function generateExternalURL(nftId)
+  return "https://belieffi.arweave.net/nft/" .. tostring(nftId)
+end
+
+-- Validate metadata structure and content
+local function validateMetadata(metadata)
+  local validation = {
+    valid = true,
+    errors = {},
+    warnings = {}
+  }
+  
+  -- Check required fields
+  for _, field in ipairs(VALIDATION_RULES.required_fields) do
+    if not metadata[field] then
+      table.insert(validation.errors, "Missing required field: " .. field)
+      validation.valid = false
+    end
+  end
+  
+  -- Check data types and values
+  if metadata.lucky_number then
+    if type(metadata.lucky_number) ~= "number" then
+      table.insert(validation.errors, "lucky_number must be a number")
+      validation.valid = false
+    elseif metadata.lucky_number < VALIDATION_RULES.numeric_ranges.lucky_number.min or 
+           metadata.lucky_number > VALIDATION_RULES.numeric_ranges.lucky_number.max then
+      table.insert(validation.errors, "lucky_number out of range (0-999)")
+      validation.valid = false
+    end
+  end
+  
+  -- Check name format
+  if metadata.name then
+    if not string.match(metadata.name, VALIDATION_RULES.string_patterns.name) then
+      table.insert(validation.errors, "Invalid name format")
+      validation.valid = false
+    end
+  end
+  
+  -- Check market sentiment structure
+  if metadata.market_sentiment then
+    local sentiment = metadata.market_sentiment
+    if not sentiment.ao_sentiment or not sentiment.confidence_score then
+      table.insert(validation.errors, "Invalid market_sentiment structure")
+      validation.valid = false
+    elseif type(sentiment.confidence_score) ~= "number" or 
+           sentiment.confidence_score < 0 or sentiment.confidence_score > 1 then
+      table.insert(validation.errors, "confidence_score must be between 0 and 1")
+      validation.valid = false
+    end
+  end
+  
+  -- Check attributes array
+  if metadata.attributes then
+    if type(metadata.attributes) ~= "table" then
+      table.insert(validation.errors, "attributes must be an array")
+      validation.valid = false
+    else
+      for i, attr in ipairs(metadata.attributes) do
+        if not attr.trait_type or not attr.value then
+          table.insert(validation.errors, "Invalid attribute structure at index " .. i)
+          validation.valid = false
+        end
+      end
+    end
+  end
+  
+  return validation
+end
+
+-- Generate complete NFT metadata
+local function generateNFTMetadata(nftId, owner, luckyNumber, marketSentiment)
+  -- Validate inputs
+  if not nftId or nftId <= 0 or nftId > MAX_SUPPLY then
+    return nil, "Invalid NFT ID"
+  end
+  
+  if not isValidAddress(owner) then
+    return nil, "Invalid owner address"
+  end
+  
+  if not luckyNumber or luckyNumber < 0 or luckyNumber > 999 then
+    return nil, "Invalid lucky number"
+  end
+  
+  if not marketSentiment or not marketSentiment.ao_sentiment then
+    return nil, "Invalid market sentiment"
+  end
+  
+  -- Create base metadata from template
+  local metadata = {
+    name = generateNFTName(nftId),
+    description = METADATA_TEMPLATE.description,
+    strategy = METADATA_TEMPLATE.strategy,
+    image = METADATA_TEMPLATE.image,
+    external_url = generateExternalURL(nftId),
+    collection = {
+      name = METADATA_TEMPLATE.collection.name,
+      family = METADATA_TEMPLATE.collection.family
+    },
+    
+    -- Dynamic data
+    lucky_number = luckyNumber,
+    market_sentiment = {
+      ao_sentiment = marketSentiment.ao_sentiment,
+      confidence_score = marketSentiment.confidence_score,
+      analysis_timestamp = marketSentiment.analysis_timestamp,
+      market_factors = {},
+      sentiment_source = marketSentiment.sentiment_source,
+      lucky_number_basis = luckyNumber
+    },
+    
+    -- NFT details
+    owner = owner,
+    minted_at = getCurrentTimestamp(),
+    token_id = nftId,
+    
+    -- Atomic Assets compliance
+    standard = "Atomic Assets",
+    version = "1.0"
+  }
+  
+  -- Copy market factors (deep copy)
+  for _, factor in ipairs(marketSentiment.market_factors or {}) do
+    table.insert(metadata.market_sentiment.market_factors, factor)
+  end
+  
+  -- Generate attributes array
+  metadata.attributes = {
+    {
+      trait_type = "Lucky Number",
+      value = luckyNumber,
+      display_type = "number"
+    },
+    {
+      trait_type = "Market Sentiment",
+      value = marketSentiment.ao_sentiment,
+      display_type = "string"
+    },
+    {
+      trait_type = "Confidence Score", 
+      value = math.floor(marketSentiment.confidence_score * 100) .. "%",
+      display_type = "string"
+    },
+    {
+      trait_type = "Strategy",
+      value = "AO MAXI",
+      display_type = "string"
+    },
+    {
+      trait_type = "Collection",
+      value = "BeliefFi DeFAI",
+      display_type = "string"
+    },
+    {
+      trait_type = "Rarity Tier",
+      value = getSentimentRarityTier(marketSentiment.ao_sentiment),
+      display_type = "string"
+    }
+  }
+  
+  -- Add market factors as attributes
+  for _, factor in ipairs(metadata.market_sentiment.market_factors) do
+    table.insert(metadata.attributes, {
+      trait_type = "Market Factor",
+      value = factor,
+      display_type = "string"
+    })
+  end
+  
+  return metadata, nil
+end
+
+-- Get sentiment rarity tier for attributes
+local function getSentimentRarityTier(sentiment)
+  local rarityMap = {
+    very_bullish = "Legendary",
+    bullish = "Rare", 
+    neutral = "Common",
+    bearish = "Uncommon"
+  }
+  return rarityMap[sentiment] or "Common"
+end
+
+-- Store metadata for an NFT
+local function storeNFTMetadata(nftId, metadata)
+  -- Validate metadata before storing
+  local validation = validateMetadata(metadata)
+  if not validation.valid then
+    logError("Invalid metadata for storage", {
+      nft_id = nftId,
+      errors = validation.errors
+    })
+    return false, "Metadata validation failed"
+  end
+  
+  -- Store metadata
+  State.nft_metadata[nftId] = metadata
+  
+  logInfo(string.format("Metadata stored for NFT #%d", nftId))
+  
+  return true, "Metadata stored successfully"
+end
+
+-- Retrieve metadata for an NFT
+local function getMetadata(nftId)
+  if not nftId or nftId <= 0 or nftId > MAX_SUPPLY then
+    return nil, "Invalid NFT ID"
+  end
+  
+  local metadata = State.nft_metadata[nftId]
+  if not metadata then
+    return nil, "Metadata not found"
+  end
+  
+  return metadata, nil
+end
+
+-- Update metadata for an NFT (limited updates allowed)
+local function updateMetadata(nftId, updates)
+  -- Get existing metadata
+  local existingMetadata, error = getMetadata(nftId)
+  if not existingMetadata then
+    return false, error
+  end
+  
+  -- Only allow certain fields to be updated
+  local allowedUpdates = {"external_url", "image", "description"}
+  local updatedMetadata = {}
+  
+  -- Copy existing metadata
+  for key, value in pairs(existingMetadata) do
+    updatedMetadata[key] = value
+  end
+  
+  -- Apply allowed updates
+  for key, value in pairs(updates) do
+    if not table.contains(allowedUpdates, key) then
+      logError("Update not allowed for field", {field = key})
+      return false, "Field update not allowed: " .. key
+    end
+    updatedMetadata[key] = value
+  end
+  
+  -- Validate updated metadata
+  local validation = validateMetadata(updatedMetadata)
+  if not validation.valid then
+    return false, "Updated metadata validation failed"
+  end
+  
+  -- Store updated metadata
+  State.nft_metadata[nftId] = updatedMetadata
+  
+  logInfo(string.format("Metadata updated for NFT #%d", nftId))
+  
+  return true, "Metadata updated successfully"
+end
+
+-- Helper function to check if table contains value
+local function table.contains(table, value)
+  for _, v in pairs(table) do
+    if v == value then
+      return true
+    end
+  end
+  return false
+end
+
+-- Get metadata statistics
+local function getMetadataStats()
+  local stats = {
+    total_metadata_stored = 0,
+    sentiment_distribution = {
+      bearish = 0,
+      neutral = 0,
+      bullish = 0,
+      very_bullish = 0
+    },
+    lucky_number_ranges = {
+      low = 0,    -- 0-199
+      medium = 0, -- 200-499
+      high = 0,   -- 500-799
+      max = 0     -- 800-999
+    },
+    average_confidence = 0
+  }
+  
+  local totalConfidence = 0
+  
+  for nftId, metadata in pairs(State.nft_metadata) do
+    stats.total_metadata_stored = stats.total_metadata_stored + 1
+    
+    -- Count sentiment distribution
+    if metadata.market_sentiment and metadata.market_sentiment.ao_sentiment then
+      local sentiment = metadata.market_sentiment.ao_sentiment
+      if stats.sentiment_distribution[sentiment] then
+        stats.sentiment_distribution[sentiment] = stats.sentiment_distribution[sentiment] + 1
+      end
+      
+      -- Add to confidence calculation
+      if metadata.market_sentiment.confidence_score then
+        totalConfidence = totalConfidence + metadata.market_sentiment.confidence_score
+      end
+    end
+    
+    -- Count lucky number ranges
+    if metadata.lucky_number then
+      local ln = metadata.lucky_number
+      if ln <= 199 then
+        stats.lucky_number_ranges.low = stats.lucky_number_ranges.low + 1
+      elseif ln <= 499 then
+        stats.lucky_number_ranges.medium = stats.lucky_number_ranges.medium + 1
+      elseif ln <= 799 then
+        stats.lucky_number_ranges.high = stats.lucky_number_ranges.high + 1
+      else
+        stats.lucky_number_ranges.max = stats.lucky_number_ranges.max + 1
+      end
+    end
+  end
+  
+  -- Calculate average confidence
+  if stats.total_metadata_stored > 0 then
+    stats.average_confidence = totalConfidence / stats.total_metadata_stored
+  end
+  
+  return stats
+end
+
+-- Generate metadata for all existing NFTs (utility function)
+local function regenerateAllMetadata()
+  local regenerated = 0
+  local errors = {}
+  
+  for nftId = 1, State.total_minted do
+    local owner = State.nft_owners[nftId]
+    local luckyNumber = State.lucky_numbers_assigned[nftId]
+    local marketSentiment = State.market_sentiments[nftId]
+    
+    if owner and luckyNumber and marketSentiment then
+      local metadata, error = generateNFTMetadata(nftId, owner, luckyNumber, marketSentiment)
+      if metadata then
+        local stored, storeError = storeNFTMetadata(nftId, metadata)
+        if stored then
+          regenerated = regenerated + 1
+        else
+          table.insert(errors, {nft_id = nftId, error = storeError})
+        end
+      else
+        table.insert(errors, {nft_id = nftId, error = error})
+      end
+    else
+      table.insert(errors, {nft_id = nftId, error = "Missing required data"})
+    end
+  end
+  
+  return {
+    regenerated = regenerated,
+    errors = errors,
+    total_processed = State.total_minted
+  }
+end
+
+-- ============================================================================
 -- INITIALIZATION
 -- ============================================================================
 
@@ -1669,6 +2092,19 @@ BeliefFiNFT = {
   processRefundEnhanced = processRefundEnhanced,
   getRevenueReport = getRevenueReport,
   getFundManagementStatus = getFundManagementStatus,
+  
+  -- NFT Metadata Management functions (Phase 4-1)
+  formatNumberWithZeroPad = formatNumberWithZeroPad,
+  generateNFTName = generateNFTName,
+  generateExternalURL = generateExternalURL,
+  validateMetadata = validateMetadata,
+  generateNFTMetadata = generateNFTMetadata,
+  getSentimentRarityTier = getSentimentRarityTier,
+  storeNFTMetadata = storeNFTMetadata,
+  getMetadata = getMetadata,
+  updateMetadata = updateMetadata,
+  getMetadataStats = getMetadataStats,
+  regenerateAllMetadata = regenerateAllMetadata,
   
   -- State access
   getState = function() return State end,
