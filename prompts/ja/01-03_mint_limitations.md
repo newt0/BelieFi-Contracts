@@ -27,9 +27,9 @@ Phase 1-2 の成果物を基に、Mint 制限管理機能を実装します。
 3. getMintStatus(): Mint 状況の取得
 4. validateMintRequest(address): Mint 要求の事前検証
 
-制限ロジック:
+制限ロジック（Public Mint 版）:
 
-- Allow List 外のアドレスは拒否
+- **Allow List チェックなし（誰でも Mint 可能）**
 - 既に Mint 済みのアドレスは拒否（1 アドレス 1 個まで）
 - 発行上限 100 個に達している場合は拒否
 - 1 回の Mint で必ず 1 個のみ

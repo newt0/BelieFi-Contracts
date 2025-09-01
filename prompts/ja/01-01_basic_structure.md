@@ -21,5 +21,11 @@ BeliefFi DeFAI NFT プロジェクトの Atomic Assets AO Process を実装し�
 - Mint 価格: 1 USDA
 - 発行上限: 100 個
 - 1 回の Mint で 1 個のみ
+- **Public Mint 方式（Allow List なし）**
+
+MVP 簡素化:
+
+- Allow List 機能は実装しない
+- 誰でも Mint 可能（1 アドレス 1 個制限のみ）
 
 コメントを含む完全な Lua コードで実装してください。

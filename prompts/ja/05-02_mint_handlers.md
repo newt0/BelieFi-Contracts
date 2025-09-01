@@ -24,18 +24,17 @@ Action: "Credit-Notice"
 
 1. 送信者検証（USDA のみ受付）
 2. 支払い金額検証（exactly 1000000000000）
-3. Allow List・制限チェック
+3. Mint 制限チェック（Public Mint）
 4. 完全 Mint 実行
 5. 結果通知
 
-### Allow-List Handler
+### Mint-Eligibility Handler
 
-Action: "Allow-List"
+Action: "Mint-Eligibility"
 Tags: Address = 確認対象アドレス
 返却データ:
 {
 address: 対象アドレス,
-allowed: true|false,
 already_minted: true|false,
 mint_eligible: true|false,
 reason: 理由説明
@@ -71,10 +70,10 @@ address_eligible: アドレス指定時の適格性
 
 Credit-Notice 処理詳細:
 
-1. msg.From == USDT Token ID 検証
+1. msg.From == USDA Token ID 検証
 2. msg.Tags["Action"] == "Credit-Notice" 確認
 3. 支払い者アドレス取得（From-Process or Sender）
-4. executeFullMint()呼び出し
+4. executeFullMint()呼び出し（Public Mint）
 5. 結果を Sender に通知
 
 エラーハンドリング:
@@ -89,13 +88,10 @@ Credit-Notice 処理詳細:
 - 成功: {status: "success", data: 結果データ}
 - 失敗: {status: "error", message: エラー詳細}
 
+MVP 簡素化:
+
+- Allow List Handler を Mint-Eligibility Handler に置き換え
+- Public Mint のため Allow List チェックなし
+- Smart Wallet 関連処理を削除
+
 前回のコードに統合し、完全な Handler 群を含むコードで実装してください。
-
-MVP に向けた推奨修正は全て受け入れいます。
-
-1. Phase 3-2 簡素化: Smart
-   Wallet 作成を後回しにして、一時的にプロセス内で資金管理
-2. Phase 6 簡素化: 基本的なエラーハンドリングのみ実装
-3. Phase 7 削除: 単体テストをシンプルな動作確認に置き換え
-
-また、Allow List は要件から外して、Public Mint にした方が実装がラクですか？

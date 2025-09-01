@@ -34,14 +34,13 @@ Handler 実装:
 1. Credit-Notice Handler: msg.From == USDA Token ID の場合のみ処理
 2. Transaction ID 重複チェック機能
 3. 支払い金額検証（exactly 1000000000000）
-4. Allow List & Mint 制限チェック
+4. Mint 制限チェック（Public Mint 対応）
 5. 超過分返金機能
 
 エラーハンドリング:
 
 - 金額不足: "Insufficient payment. Required: 1 USDA"
 - 金額超過: 差額返金 + "Overpayment refunded"
-- Allow List 外: "Address not in allow list"
 - 既 Mint 済み: "Address already minted"
 - 売り切れ: "Sold out - 100 NFTs already minted"
 - 重複処理: "Transaction already processed"
@@ -49,5 +48,11 @@ Handler 実装:
 巻き戻し処理:
 
 - レベル 1: 支払い受信後、Mint 前のエラー → 全額返金
+
+MVP 簡素化:
+
+- Allow List チェックなし（Public Mint）
+- 基本的なエラーハンドリングのみ
+- シンプルな返金処理
 
 前回のコードに追加し、支払い処理を含む完全なコードで実装してください。

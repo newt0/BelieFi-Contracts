@@ -28,17 +28,16 @@ NFT 基本情報:
 - Denomination: "1"
 - Total Supply: "100"
 
-統合 Mint 処理フロー:
+統合 Mint 処理フロー（MVP 簡素版）:
 
-1. 事前検証（Allow List、制限、在庫）
+1. 事前検証（制限、在庫）
 2. Lucky Number 生成
 3. Market Sentiment 生成
 4. NFT メタデータ作成
 5. Atomic Assets Mint 実行
 6. 所有権設定
-7. Smart Wallet 作成
-8. 資金転送
-9. 成功記録・通知
+7. 収益記録
+8. 成功通知
 
 データ構造:
 
@@ -49,7 +48,7 @@ NFT 基本情報:
 
 機能要件:
 
-1. executeFullMint(buyer_address, payment_amount): 完全 Mint 実行
+1. executeFullMint(buyer_address, payment_amount): 完全 Mint 実行（Public Mint）
 2. generateNFTId(): 次の NFT ID 生成
 3. mintAtomicAsset(nft_id, owner, metadata): Atomic Assets Mint
 4. setOwnership(nft_id, owner): 所有権設定
@@ -75,5 +74,11 @@ Atomic Assets 準拠要件:
 - Mint 失敗時の状態復元
 - 部分的成功時の整合性保持
 - エラーログの詳細記録
+
+MVP 簡素化:
+
+- Allow List チェックなし
+- Smart Wallet 作成なし
+- 資金はプロセス内管理
 
 前回のコードに統合し、完全な Mint 実行機能を含むコードで実装してください。

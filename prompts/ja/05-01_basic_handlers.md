@@ -30,7 +30,7 @@ Total_Supply: "100",
 Current_Supply: 現在の発行済み数,
 Mint_Price: "1 USDA",
 Mint_Status: "active"|"sold_out",
-Allow_List_Count: Allow List 登録数,
+Mint_Type: "Public Mint",
 Contract_Type: "Atomic Asset - BeliefFi NFT"
 }
 
