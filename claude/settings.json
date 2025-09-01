@@ -11,7 +11,7 @@
       "Read(./coverage/**)",
       "Read(./tmp/**)",
       "Read(./logs/**)",
-      "Read(./claude/ja/**)"
+      "Read(./prompts/ja/**)"
     ]
   }
 }
