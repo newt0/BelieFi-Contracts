@@ -2920,7 +2920,7 @@ local function testMintFlow(testAddress)
     return false, "Test mode disabled"
   end
   
-  testAddress = testAddress or "test_address_123456789012345678901234567890123456789012"
+  testAddress = testAddress or "test_address_1234567890123456789012345678901"
   
   logInfo("=== Testing Mint Flow ===", {test_address = testAddress})
   
@@ -2934,18 +2934,34 @@ local function testMintFlow(testAddress)
   
   -- Test lucky number generation
   local luckyNumber = getNextLuckyNumber()
+  if not luckyNumber or luckyNumber < 0 or luckyNumber > 999 then
+    logError("Lucky number generation failed", {lucky_number = luckyNumber})
+    return false, "Lucky number generation failed"
+  end
   logInfo("Lucky number generated", {lucky_number = luckyNumber})
   
   -- Test market sentiment
   local sentiment = generateMarketSentiment(luckyNumber)
+  if not sentiment then
+    logError("Market sentiment generation failed", {lucky_number = luckyNumber})
+    return false, "Market sentiment generation failed"
+  end
   logInfo("Market sentiment generated", sentiment)
   
   -- Test NFT ID generation
   local nftId = generateNFTId()
+  if not nftId or nftId <= 0 then
+    logError("NFT ID generation failed", {nft_id = nftId})
+    return false, "NFT ID generation failed"
+  end
   logInfo("NFT ID generated", {nft_id = nftId})
   
   -- Test metadata generation
-  local metadata = generateNFTMetadata(nftId, testAddress, luckyNumber, sentiment)
+  local metadata, metadataError = generateNFTMetadata(nftId, testAddress, luckyNumber, sentiment)
+  if not metadata then
+    logError("Metadata generation failed", {error = metadataError})
+    return false, "Metadata generation failed: " .. (metadataError or "unknown error")
+  end
   logInfo("Metadata generated", {nft_id = nftId, metadata_preview = {
     name = metadata.name,
     lucky_number = metadata.lucky_number,
