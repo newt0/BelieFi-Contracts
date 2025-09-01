@@ -1930,6 +1930,355 @@ local function regenerateAllMetadata()
 end
 
 -- ============================================================================
+-- MINT EXECUTION FUNCTIONS (Phase 4-2)
+-- ============================================================================
+
+-- Generate next available NFT ID
+local function generateNFTId()
+  local nextId = State.total_minted + 1
+  if nextId > MAX_SUPPLY then
+    logError("Maximum supply reached", {
+      current_supply = State.total_minted,
+      max_supply = MAX_SUPPLY
+    })
+    return nil, "Maximum supply reached"
+  end
+  
+  return nextId, nil
+end
+
+-- Set ownership for an NFT
+local function setOwnership(nftId, owner)
+  -- Validate inputs
+  if not nftId or nftId <= 0 or nftId > MAX_SUPPLY then
+    logError("Invalid NFT ID for ownership", {nft_id = nftId})
+    return false, "Invalid NFT ID"
+  end
+  
+  if not isValidAddress(owner) then
+    logError("Invalid owner address", {address = owner})
+    return false, "Invalid address"
+  end
+  
+  -- Check if ownership already set
+  if State.nft_owners[nftId] then
+    logError("Ownership already set", {
+      nft_id = nftId,
+      existing_owner = State.nft_owners[nftId],
+      new_owner = owner
+    })
+    return false, "Ownership already set"
+  end
+  
+  -- Set ownership
+  State.nft_owners[nftId] = owner
+  
+  -- Update balance
+  initializeBalance(owner)
+  State.nft_balances[owner] = (State.nft_balances[owner] or 0) + 1
+  
+  logInfo(string.format("Ownership set: NFT #%d to %s", nftId, owner))
+  
+  return true, "Ownership set successfully"
+end
+
+-- Update supply counters
+local function updateSupply()
+  State.remaining_supply = MAX_SUPPLY - State.total_minted
+  
+  -- Log supply status
+  logInfo(string.format("Supply updated: %d/%d minted (%d remaining)", 
+    State.total_minted, MAX_SUPPLY, State.remaining_supply))
+  
+  return State.total_minted, State.remaining_supply
+end
+
+-- Record successful mint in history
+local function recordMintSuccess(nftId, owner, timestamp)
+  local mintRecord = {
+    nft_id = nftId,
+    owner = owner,
+    minted_at = timestamp or getCurrentTimestamp(),
+    block_height = nil, -- Could be set if available
+    transaction_id = nil -- Will be set by caller if available
+  }
+  
+  -- Add to mint history (we can use nft_ids array for this)
+  if not table.contains(State.nft_ids, nftId) then
+    table.insert(State.nft_ids, nftId)
+  end
+  
+  logInfo(string.format("Mint success recorded: NFT #%d to %s at %s", 
+    nftId, owner, mintRecord.minted_at))
+  
+  return mintRecord
+end
+
+-- Core Atomic Assets mint function
+local function mintAtomicAsset(nftId, owner, metadata)
+  -- Validate all inputs
+  if not nftId or nftId <= 0 or nftId > MAX_SUPPLY then
+    return false, "Invalid NFT ID"
+  end
+  
+  if not isValidAddress(owner) then
+    return false, "Invalid owner address"
+  end
+  
+  if not metadata then
+    return false, "Metadata required"
+  end
+  
+  -- Validate metadata structure
+  local validation = validateMetadata(metadata)
+  if not validation.valid then
+    logError("Invalid metadata for minting", {
+      nft_id = nftId,
+      errors = validation.errors
+    })
+    return false, "Invalid metadata structure"
+  end
+  
+  -- Check if NFT already exists
+  if State.nft_owners[nftId] then
+    return false, "NFT already minted"
+  end
+  
+  -- Set ownership
+  local ownershipSet, ownershipError = setOwnership(nftId, owner)
+  if not ownershipSet then
+    return false, "Ownership setting failed: " .. ownershipError
+  end
+  
+  -- Store metadata
+  local metadataStored, metadataError = storeNFTMetadata(nftId, metadata)
+  if not metadataStored then
+    -- Rollback ownership if metadata storage fails
+    State.nft_owners[nftId] = nil
+    State.nft_balances[owner] = (State.nft_balances[owner] or 1) - 1
+    return false, "Metadata storage failed: " .. metadataError
+  end
+  
+  -- Update global supply counters
+  State.total_minted = State.total_minted + 1
+  updateSupply()
+  
+  -- Record mint success
+  recordMintSuccess(nftId, owner, getCurrentTimestamp())
+  
+  logInfo(string.format("Atomic Asset minted: NFT #%d to %s", nftId, owner))
+  
+  return true, "NFT minted successfully"
+end
+
+-- Complete mint execution (integrating all previous functions)
+local function executeFullMint(buyerAddress, paymentAmount)
+  logInfo(string.format("Starting full mint execution for %s (Amount: %s)", buyerAddress, paymentAmount))
+  
+  -- Pre-validation
+  local eligibility = checkMintEligibility(buyerAddress)
+  if not eligibility.eligible then
+    logError("Mint eligibility failed", {
+      address = buyerAddress,
+      reason = eligibility.reason
+    })
+    return createErrorResponse(eligibility.reason)
+  end
+  
+  -- Generate NFT ID
+  local nftId, idError = generateNFTId()
+  if not nftId then
+    logError("NFT ID generation failed", {error = idError})
+    return createErrorResponse("NFT ID generation failed")
+  end
+  
+  -- Generate NFT data (lucky number + market sentiment)
+  local nftData, dataError = generateNFTData(nftId)
+  if not nftData then
+    logError("NFT data generation failed", {nft_id = nftId, error = dataError})
+    return createErrorResponse("NFT data generation failed: " .. (dataError or "unknown error"))
+  end
+  
+  -- Generate metadata
+  local metadata, metadataError = generateNFTMetadata(nftId, buyerAddress, nftData.lucky_number, nftData.market_sentiment)
+  if not metadata then
+    logError("Metadata generation failed", {nft_id = nftId, error = metadataError})
+    return createErrorResponse("Metadata generation failed: " .. (metadataError or "unknown error"))
+  end
+  
+  -- Execute Atomic Assets mint
+  local mintSuccess, mintError = mintAtomicAsset(nftId, buyerAddress, metadata)
+  if not mintSuccess then
+    logError("Atomic Assets mint failed", {nft_id = nftId, error = mintError})
+    return createErrorResponse("NFT minting failed: " .. mintError)
+  end
+  
+  -- Record additional data (lucky number and market sentiment are recorded by mintAtomicAsset via metadata)
+  recordLuckyNumber(nftId, nftData.lucky_number)
+  recordMarketSentiment(nftId, nftData.market_sentiment)
+  
+  -- Record revenue
+  local revenueSuccess, revenueError = recordRevenue(nftId, paymentAmount)
+  if not revenueSuccess then
+    logError("Revenue recording failed", {nft_id = nftId, error = revenueError})
+    -- Continue anyway as mint was successful
+  end
+  
+  logInfo(string.format("Full mint execution completed: NFT #%d to %s", nftId, buyerAddress))
+  
+  return createSuccessResponse({
+    nft_id = nftId,
+    owner = buyerAddress,
+    name = metadata.name,
+    lucky_number = nftData.lucky_number,
+    market_sentiment = nftData.market_sentiment,
+    metadata = metadata,
+    message = string.format("Successfully minted NFT #%d", nftId)
+  })
+end
+
+-- Get mint status overview
+local function getMintStatusOverview()
+  local status = {
+    basic_info = {
+      name = NFT_NAME,
+      symbol = NFT_SYMBOL,
+      total_supply = MAX_SUPPLY,
+      current_supply = State.total_minted,
+      remaining_supply = getRemainingSupply()
+    },
+    mint_state = {
+      status = State.total_minted >= MAX_SUPPLY and "sold_out" or "active",
+      public_mint_enabled = checkPublicMintEnabled(),
+      mint_enabled = State.mint_enabled
+    },
+    statistics = {
+      minted_percentage = (State.total_minted / MAX_SUPPLY) * 100,
+      unique_holders = 0,
+      last_minted_id = nil
+    }
+  }
+  
+  -- Count unique holders
+  local holders = {}
+  for _, owner in pairs(State.nft_owners) do
+    holders[owner] = true
+  end
+  for _ in pairs(holders) do
+    status.statistics.unique_holders = status.statistics.unique_holders + 1
+  end
+  
+  -- Get last minted NFT ID
+  if #State.nft_ids > 0 then
+    status.statistics.last_minted_id = State.nft_ids[#State.nft_ids]
+  end
+  
+  return status
+end
+
+-- Get NFT information (Atomic Assets compliance)
+local function getNFTInfo(nftId)
+  if not nftId or nftId <= 0 or nftId > MAX_SUPPLY then
+    return nil, "Invalid NFT ID"
+  end
+  
+  local owner = State.nft_owners[nftId]
+  if not owner then
+    return nil, "NFT not found"
+  end
+  
+  local metadata = State.nft_metadata[nftId]
+  local luckyNumber = State.lucky_numbers_assigned[nftId]
+  local marketSentiment = State.market_sentiments[nftId]
+  
+  local nftInfo = {
+    nft_id = nftId,
+    name = metadata and metadata.name or generateNFTName(nftId),
+    owner = owner,
+    minted = true,
+    minted_at = metadata and metadata.minted_at,
+    lucky_number = luckyNumber,
+    market_sentiment = marketSentiment,
+    metadata = metadata,
+    
+    -- Atomic Assets standard fields
+    collection = {
+      name = "BeliefFi DeFAI NFT Collection",
+      family = "AO MAXI"
+    },
+    standard = "Atomic Assets",
+    version = "1.0"
+  }
+  
+  return nftInfo, nil
+end
+
+-- Get all NFTs owned by an address
+local function getNFTsByOwner(ownerAddress)
+  if not isValidAddress(ownerAddress) then
+    return nil, "Invalid address"
+  end
+  
+  local ownedNFTs = {}
+  
+  for nftId, owner in pairs(State.nft_owners) do
+    if owner == ownerAddress then
+      local nftInfo, error = getNFTInfo(nftId)
+      if nftInfo then
+        table.insert(ownedNFTs, nftInfo)
+      end
+    end
+  end
+  
+  -- Sort by NFT ID
+  table.sort(ownedNFTs, function(a, b) return a.nft_id < b.nft_id end)
+  
+  return {
+    owner = ownerAddress,
+    nfts_owned = #ownedNFTs,
+    nfts = ownedNFTs
+  }, nil
+end
+
+-- Basic transfer function (limited for future SBT conversion)
+local function transferNFT(nftId, fromAddress, toAddress)
+  -- Basic validation
+  if not nftId or nftId <= 0 or nftId > MAX_SUPPLY then
+    return false, "Invalid NFT ID"
+  end
+  
+  if not isValidAddress(fromAddress) or not isValidAddress(toAddress) then
+    return false, "Invalid address"
+  end
+  
+  -- Check ownership
+  local currentOwner = State.nft_owners[nftId]
+  if currentOwner ~= fromAddress then
+    return false, "Not the owner"
+  end
+  
+  -- For MVP, we'll implement but log a warning about future SBT conversion
+  logInfo("WARNING: Transfer executed - will be restricted when converted to SBT")
+  
+  -- Execute transfer
+  State.nft_owners[nftId] = toAddress
+  
+  -- Update balances
+  State.nft_balances[fromAddress] = (State.nft_balances[fromAddress] or 1) - 1
+  initializeBalance(toAddress)
+  State.nft_balances[toAddress] = (State.nft_balances[toAddress] or 0) + 1
+  
+  -- Update metadata owner
+  if State.nft_metadata[nftId] then
+    State.nft_metadata[nftId].owner = toAddress
+  end
+  
+  logInfo(string.format("NFT #%d transferred from %s to %s", nftId, fromAddress, toAddress))
+  
+  return true, "Transfer successful"
+end
+
+-- ============================================================================
 -- INITIALIZATION
 -- ============================================================================
 
@@ -2024,6 +2373,775 @@ Handlers.add("CreditNotice", Handlers.utils.hasMatchingTag("Action", "Credit-Not
 end)
 
 -- ============================================================================
+-- PHASE 5-1: BASIC HANDLERS IMPLEMENTATION
+-- ============================================================================
+
+-- Info Handler: Return basic process information
+Handlers.add("Info", Handlers.utils.hasMatchingTag("Action", "Info"), function(msg)
+  logInfo("Processing Info request")
+  
+  local info = {
+    Name = NFT_NAME,
+    Ticker = NFT_SYMBOL,
+    Denomination = "1",
+    Logo = "https://arweave.net/belieffi-logo", -- Fixed logo URL
+    Description = "DeFAI NFT Collection - Believing in AO's growth",
+    Total_Supply = tostring(MAX_SUPPLY),
+    Current_Supply = tostring(State.total_minted),
+    Mint_Price = "1 USDA",
+    Mint_Status = State.total_minted >= MAX_SUPPLY and "sold_out" or "active",
+    Mint_Type = "Public Mint",
+    Contract_Type = "Atomic Asset - BeliefFi NFT"
+  }
+  
+  logInfo("Info request processed successfully", {current_supply = State.total_minted})
+  
+  ao.send({
+    Target = msg.From,
+    Action = "Info-Response",
+    Data = json.encode(info)
+  })
+end)
+
+-- Balance Handler: Check balance by address
+Handlers.add("Balance", Handlers.utils.hasMatchingTag("Action", "Balance"), function(msg)
+  local target = msg.Tags.Target or msg.From
+  
+  logInfo("Processing Balance request", {target = target})
+  
+  if not isValidAddress(target) then
+    logError("Invalid address format", {address = target})
+    ao.send({
+      Target = msg.From,
+      Action = "Balance-Error",
+      Error = "Invalid address format"
+    })
+    return
+  end
+  
+  local balance = State.nft_balances[target] or 0
+  
+  logInfo("Balance request processed", {target = target, balance = balance})
+  
+  ao.send({
+    Target = msg.From,
+    Action = "Balance-Response",
+    Balance = tostring(balance),
+    Target = target
+  })
+end)
+
+-- Balances Handler: List all address balances
+Handlers.add("Balances", Handlers.utils.hasMatchingTag("Action", "Balances"), function(msg)
+  logInfo("Processing Balances request")
+  
+  local balances = {}
+  for address, balance in pairs(State.nft_balances) do
+    if balance > 0 then
+      balances[address] = tostring(balance)
+    end
+  end
+  
+  logInfo("Balances request processed", {total_holders = table.getn(balances)})
+  
+  ao.send({
+    Target = msg.From,
+    Action = "Balances-Response",
+    Data = json.encode(balances)
+  })
+end)
+
+-- Metadata Handler: Return NFT metadata
+Handlers.add("Metadata", Handlers.utils.hasMatchingTag("Action", "Metadata"), function(msg)
+  local nftId = tonumber(msg.Tags["NFT-ID"])
+  
+  logInfo("Processing Metadata request", {nft_id = nftId})
+  
+  if not nftId then
+    logError("Invalid NFT ID format")
+    ao.send({
+      Target = msg.From,
+      Action = "Metadata-Error",
+      Error = "Invalid NFT ID format"
+    })
+    return
+  end
+  
+  if nftId < 1 or nftId > MAX_SUPPLY then
+    logError("NFT ID out of range", {nft_id = nftId})
+    ao.send({
+      Target = msg.From,
+      Action = "Metadata-Error",
+      Error = "NFT ID out of range"
+    })
+    return
+  end
+  
+  local metadata = State.nft_metadata[nftId]
+  if not metadata then
+    logError("NFT not found", {nft_id = nftId})
+    ao.send({
+      Target = msg.From,
+      Action = "Metadata-Error",
+      Error = "NFT not found"
+    })
+    return
+  end
+  
+  logInfo("Metadata request processed", {nft_id = nftId})
+  
+  ao.send({
+    Target = msg.From,
+    Action = "Metadata-Response",
+    ["NFT-ID"] = tostring(nftId),
+    Data = json.encode(metadata)
+  })
+end)
+
+-- Helper function to get table length (Lua doesn't have built-in length for hash tables)
+local function table.getn(t)
+  local count = 0
+  for _ in pairs(t) do count = count + 1 end
+  return count
+end
+
+-- ============================================================================
+-- PHASE 5-2: MINT HANDLERS IMPLEMENTATION
+-- ============================================================================
+
+-- Mint-Eligibility Handler: Check if address can mint
+Handlers.add("Mint-Eligibility", Handlers.utils.hasMatchingTag("Action", "Mint-Eligibility"), function(msg)
+  local address = msg.Tags.Address or msg.From
+  
+  logInfo("Processing Mint-Eligibility request", {address = address})
+  
+  if not isValidAddress(address) then
+    logError("Invalid address format", {address = address})
+    ao.send({
+      Target = msg.From,
+      Action = "Mint-Eligibility-Error",
+      Error = "Invalid address format"
+    })
+    return
+  end
+  
+  local alreadyMinted = (State.mint_records[address] and State.mint_records[address].total_minted > 0)
+  local soldOut = (State.total_minted >= MAX_SUPPLY)
+  local mintEligible = not alreadyMinted and not soldOut
+  
+  local reason = ""
+  if alreadyMinted then
+    reason = "Address has already minted"
+  elseif soldOut then
+    reason = "Collection sold out"
+  else
+    reason = "Eligible for minting"
+  end
+  
+  local eligibilityData = {
+    address = address,
+    already_minted = alreadyMinted,
+    mint_eligible = mintEligible,
+    reason = reason
+  }
+  
+  logInfo("Mint-Eligibility request processed", {address = address, eligible = mintEligible})
+  
+  ao.send({
+    Target = msg.From,
+    Action = "Mint-Eligibility-Response",
+    Data = json.encode({
+      status = "success",
+      data = eligibilityData
+    })
+  })
+end)
+
+-- Transfer Handler: NFT transfer processing (with SBT restrictions)
+Handlers.add("Transfer", Handlers.utils.hasMatchingTag("Action", "Transfer"), function(msg)
+  local recipient = msg.Tags.Recipient
+  local nftId = tonumber(msg.Tags["NFT-ID"])
+  local sender = msg.From
+  
+  logInfo("Processing Transfer request", {sender = sender, recipient = recipient, nft_id = nftId})
+  
+  -- Validate input parameters
+  if not recipient or not nftId then
+    logError("Missing required parameters", {recipient = recipient, nft_id = nftId})
+    ao.send({
+      Target = msg.From,
+      Action = "Transfer-Error",
+      Error = "Missing required parameters: Recipient and NFT-ID"
+    })
+    return
+  end
+  
+  if not isValidAddress(recipient) then
+    logError("Invalid recipient address", {recipient = recipient})
+    ao.send({
+      Target = msg.From,
+      Action = "Transfer-Error",
+      Error = "Invalid recipient address format"
+    })
+    return
+  end
+  
+  -- Check NFT ownership
+  local nftOwner = State.nft_owners[nftId]
+  if not nftOwner or nftOwner ~= sender then
+    logError("Sender does not own NFT", {sender = sender, nft_id = nftId, actual_owner = nftOwner})
+    ao.send({
+      Target = msg.From,
+      Action = "Transfer-Error",
+      Error = "You do not own this NFT"
+    })
+    return
+  end
+  
+  -- SBT Restriction Warning (for future implementation)
+  logInfo("WARNING: Transfer executed - future SBT conversion will restrict transfers", {nft_id = nftId})
+  
+  -- Execute transfer
+  local transferResult = transferNFT(nftId, sender, recipient)
+  if not transferResult.success then
+    logError("Transfer execution failed", {error = transferResult.message})
+    ao.send({
+      Target = msg.From,
+      Action = "Transfer-Error",
+      Error = transferResult.message
+    })
+    return
+  end
+  
+  logInfo("Transfer completed successfully", {sender = sender, recipient = recipient, nft_id = nftId})
+  
+  -- Notify sender
+  ao.send({
+    Target = msg.From,
+    Action = "Transfer-Response",
+    Data = json.encode({
+      status = "success",
+      data = {
+        nft_id = nftId,
+        from = sender,
+        to = recipient,
+        timestamp = getCurrentTimestamp()
+      }
+    })
+  })
+  
+  -- Notify recipient
+  ao.send({
+    Target = recipient,
+    Action = "Transfer-Notice",
+    Data = json.encode({
+      message = "NFT received",
+      nft_id = nftId,
+      from = sender,
+      timestamp = getCurrentTimestamp()
+    })
+  })
+end)
+
+-- Mint-Status Handler: Current mint status information
+Handlers.add("Mint-Status", Handlers.utils.hasMatchingTag("Action", "Mint-Status"), function(msg)
+  local address = msg.Tags.Address
+  
+  logInfo("Processing Mint-Status request", {address = address})
+  
+  local statusData = {
+    total_supply = MAX_SUPPLY,
+    current_supply = State.total_minted,
+    remaining = MAX_SUPPLY - State.total_minted,
+    mint_price = "1 USDA",
+    status = State.total_minted >= MAX_SUPPLY and "sold_out" or "active"
+  }
+  
+  -- Add address-specific eligibility if address provided
+  if address then
+    if not isValidAddress(address) then
+      logError("Invalid address format for status check", {address = address})
+      ao.send({
+        Target = msg.From,
+        Action = "Mint-Status-Error",
+        Error = "Invalid address format"
+      })
+      return
+    end
+    
+    local alreadyMinted = (State.mint_records[address] and State.mint_records[address].total_minted > 0)
+    statusData.address_eligible = not alreadyMinted and statusData.status == "active"
+  end
+  
+  logInfo("Mint-Status request processed", {current_supply = State.total_minted, status = statusData.status})
+  
+  ao.send({
+    Target = msg.From,
+    Action = "Mint-Status-Response",
+    Data = json.encode({
+      status = "success",
+      data = statusData
+    })
+  })
+end)
+
+-- ============================================================================
+-- PHASE 6: BASIC ERROR HANDLING IMPLEMENTATION
+-- ============================================================================
+
+-- Error Types (for classification)
+local ERROR_TYPES = {
+  INPUT = "INPUT",
+  BUSINESS = "BUSINESS", 
+  SYSTEM = "SYSTEM"
+}
+
+-- Unified error handler
+local function handleError(errorMessage, errorType, additionalData)
+  errorType = errorType or ERROR_TYPES.SYSTEM
+  additionalData = additionalData or {}
+  
+  local errorData = {
+    message = errorMessage,
+    type = errorType,
+    timestamp = getCurrentTimestamp(),
+    data = additionalData
+  }
+  
+  logError("Error handled", errorData)
+  
+  return {
+    status = "error",
+    message = errorMessage
+  }
+end
+
+-- Send error response to user
+local function sendError(msg, errorMessage, errorType, additionalData)
+  local errorResponse = handleError(errorMessage, errorType, additionalData)
+  
+  ao.send({
+    Target = msg.From,
+    Action = msg.Tags.Action and (msg.Tags.Action .. "-Error") or "Error",
+    Data = json.encode(errorResponse)
+  })
+  
+  return errorResponse
+end
+
+-- Enhanced input validation with error handling
+local function validateInput(value, validationType, fieldName)
+  fieldName = fieldName or "field"
+  
+  if validationType == "address" then
+    if not value or not isValidAddress(value) then
+      return false, "Invalid " .. fieldName .. " format"
+    end
+  elseif validationType == "nft_id" then
+    local nftId = tonumber(value)
+    if not nftId or nftId < 1 or nftId > MAX_SUPPLY then
+      return false, "Invalid " .. fieldName
+    end
+  elseif validationType == "payment_amount" then
+    local amount = tonumber(value)
+    if not amount or amount ~= MINT_PRICE then
+      return false, "Invalid payment amount"
+    end
+  elseif validationType == "required" then
+    if not value or value == "" then
+      return false, fieldName .. " is required"
+    end
+  end
+  
+  return true, nil
+end
+
+-- Business rule validation
+local function validateBusinessRules(address, operation)
+  if operation == "mint" then
+    -- Check if already minted
+    if State.mint_records[address] and State.mint_records[address].total_minted > 0 then
+      return false, "Address already minted"
+    end
+    
+    -- Check if sold out
+    if State.total_minted >= MAX_SUPPLY then
+      return false, "All NFTs sold out"
+    end
+  end
+  
+  return true, nil
+end
+
+-- Simplified rollback processing
+local function rollbackMint(nftId, ownerAddress, paymentAmount, reason)
+  logInfo("Initiating mint rollback", {
+    nft_id = nftId,
+    owner = ownerAddress,
+    amount = paymentAmount,
+    reason = reason
+  })
+  
+  -- Reset NFT ownership if set
+  if nftId and State.nft_owners[nftId] then
+    State.nft_owners[nftId] = nil
+    logInfo("NFT ownership reset", {nft_id = nftId})
+  end
+  
+  -- Reset balance if updated
+  if ownerAddress and State.nft_balances[ownerAddress] then
+    if State.nft_balances[ownerAddress] > 0 then
+      State.nft_balances[ownerAddress] = State.nft_balances[ownerAddress] - 1
+      logInfo("Balance rollback completed", {address = ownerAddress})
+    end
+  end
+  
+  -- Reset supply count if updated
+  if State.total_minted > 0 then
+    State.total_minted = State.total_minted - 1
+    logInfo("Supply count rollback completed", {new_total = State.total_minted})
+  end
+  
+  -- Process refund
+  if ownerAddress and paymentAmount then
+    local refundResult = processRefund(ownerAddress, paymentAmount)
+    if not refundResult.success then
+      logError("Rollback refund failed", {
+        address = ownerAddress,
+        amount = paymentAmount,
+        error = refundResult.message
+      })
+      return false, "Rollback refund failed"
+    else
+      logInfo("Rollback refund completed", {address = ownerAddress, amount = paymentAmount})
+    end
+  end
+  
+  logInfo("Mint rollback completed successfully")
+  return true, "Rollback completed"
+end
+
+-- Safe execution wrapper
+local function safeExecute(operation, ...)
+  local success, result = pcall(operation, ...)
+  
+  if not success then
+    local errorMsg = "System error: " .. tostring(result)
+    logError("Safe execution failed", {error = result})
+    return {
+      success = false,
+      message = errorMsg,
+      type = ERROR_TYPES.SYSTEM
+    }
+  end
+  
+  return result
+end
+
+-- Error recovery mechanism
+local function attemptRecovery(errorType, errorData)
+  logInfo("Attempting error recovery", {type = errorType, data = errorData})
+  
+  if errorType == ERROR_TYPES.BUSINESS then
+    -- For business errors, no automatic recovery
+    return false, "No automatic recovery for business rule violations"
+  elseif errorType == ERROR_TYPES.SYSTEM then
+    -- For system errors, attempt basic state validation
+    if not State.total_minted then
+      State.total_minted = 0
+      logInfo("Reset total_minted counter")
+    end
+    if not State.mint_records then
+      State.mint_records = {}
+      logInfo("Reset mint_records")
+    end
+    return true, "Basic state recovery attempted"
+  end
+  
+  return false, "No recovery mechanism for this error type"
+end
+
+-- Error reporting for debugging
+local function getErrorSummary()
+  local summary = {
+    total_minted = State.total_minted,
+    remaining_supply = MAX_SUPPLY - State.total_minted,
+    total_addresses = 0,
+    total_revenue = State.total_revenue or 0,
+    timestamp = getCurrentTimestamp()
+  }
+  
+  -- Count unique addresses
+  for address, _ in pairs(State.mint_records or {}) do
+    summary.total_addresses = summary.total_addresses + 1
+  end
+  
+  return summary
+end
+
+-- ============================================================================
+-- PHASE 7: SIMPLE TESTING IMPLEMENTATION
+-- ============================================================================
+
+-- Test environment flag (set to false for production)
+local TEST_MODE = true
+
+-- Basic function test: Process information verification
+local function testBasicInfo()
+  if not TEST_MODE then
+    logError("Test functions disabled in production mode")
+    return false, "Test mode disabled"
+  end
+  
+  logInfo("=== Testing Basic Info ===")
+  
+  local info = {
+    Name = NFT_NAME,
+    Ticker = NFT_SYMBOL,
+    Denomination = "1",
+    Total_Supply = tostring(MAX_SUPPLY),
+    Current_Supply = tostring(State.total_minted),
+    Mint_Price = "1 USDA",
+    Mint_Status = State.total_minted >= MAX_SUPPLY and "sold_out" or "active",
+    Mint_Type = "Public Mint",
+    Contract_Type = "Atomic Asset - BeliefFi NFT"
+  }
+  
+  logInfo("Basic Info Test Results", info)
+  logInfo("=== Basic Info Test Completed ===")
+  
+  return true, info
+end
+
+-- Mint flow test with test address
+local function testMintFlow(testAddress)
+  if not TEST_MODE then
+    logError("Test functions disabled in production mode")
+    return false, "Test mode disabled"
+  end
+  
+  testAddress = testAddress or "test_address_123456789012345678901234567890123456789012"
+  
+  logInfo("=== Testing Mint Flow ===", {test_address = testAddress})
+  
+  -- Test input validation
+  local addressValid, addressError = validateInput(testAddress, "address", "test address")
+  logInfo("Address validation result", {valid = addressValid, error = addressError})
+  
+  -- Test business rules
+  local rulesValid, rulesError = validateBusinessRules(testAddress, "mint")
+  logInfo("Business rules validation result", {valid = rulesValid, error = rulesError})
+  
+  -- Test lucky number generation
+  local luckyNumber = getNextLuckyNumber()
+  logInfo("Lucky number generated", {lucky_number = luckyNumber})
+  
+  -- Test market sentiment
+  local sentiment = generateMarketSentiment(luckyNumber)
+  logInfo("Market sentiment generated", sentiment)
+  
+  -- Test NFT ID generation
+  local nftId = generateNFTId()
+  logInfo("NFT ID generated", {nft_id = nftId})
+  
+  -- Test metadata generation
+  local metadata = generateNFTMetadata(nftId, testAddress, luckyNumber)
+  logInfo("Metadata generated", {nft_id = nftId, metadata_preview = {
+    name = metadata.name,
+    lucky_number = metadata.lucky_number,
+    market_sentiment = metadata.market_sentiment.ao_sentiment
+  }})
+  
+  logInfo("=== Mint Flow Test Completed ===")
+  
+  return true, {
+    address = testAddress,
+    nft_id = nftId,
+    lucky_number = luckyNumber,
+    sentiment = sentiment.ao_sentiment,
+    metadata = metadata
+  }
+end
+
+-- Test limitation functions
+local function testLimitations()
+  if not TEST_MODE then
+    logError("Test functions disabled in production mode")
+    return false, "Test mode disabled"
+  end
+  
+  logInfo("=== Testing Limitations ===")
+  
+  -- Test supply limits
+  local supplyInfo = {
+    max_supply = MAX_SUPPLY,
+    current_supply = State.total_minted,
+    remaining = MAX_SUPPLY - State.total_minted,
+    is_sold_out = State.total_minted >= MAX_SUPPLY
+  }
+  logInfo("Supply limitation test", supplyInfo)
+  
+  -- Test address limitation (mock multiple addresses)
+  local testAddresses = {
+    "addr1_123456789012345678901234567890123456789012",
+    "addr2_123456789012345678901234567890123456789012",
+    "addr3_123456789012345678901234567890123456789012"
+  }
+  
+  for i, addr in ipairs(testAddresses) do
+    local alreadyMinted = (State.mint_records[addr] and State.mint_records[addr].total_minted > 0)
+    logInfo("Address limitation test", {
+      address = addr,
+      already_minted = alreadyMinted,
+      can_mint = not alreadyMinted and not supplyInfo.is_sold_out
+    })
+  end
+  
+  logInfo("=== Limitations Test Completed ===")
+  
+  return true, supplyInfo
+end
+
+-- Debug function: Output current state
+local function debugState()
+  if not TEST_MODE then
+    logError("Debug functions disabled in production mode")
+    return false, "Test mode disabled"
+  end
+  
+  logInfo("=== Debug State ===")
+  
+  local stateInfo = {
+    total_minted = State.total_minted,
+    remaining_supply = MAX_SUPPLY - State.total_minted,
+    mint_records_count = 0,
+    nft_owners_count = 0,
+    nft_balances_count = 0,
+    total_revenue = State.total_revenue or 0,
+    processed_transactions_count = 0
+  }
+  
+  -- Count records
+  for _ in pairs(State.mint_records or {}) do
+    stateInfo.mint_records_count = stateInfo.mint_records_count + 1
+  end
+  
+  for _ in pairs(State.nft_owners or {}) do
+    stateInfo.nft_owners_count = stateInfo.nft_owners_count + 1
+  end
+  
+  for _ in pairs(State.nft_balances or {}) do
+    stateInfo.nft_balances_count = stateInfo.nft_balances_count + 1
+  end
+  
+  for _ in pairs(State.processed_transactions or {}) do
+    stateInfo.processed_transactions_count = stateInfo.processed_transactions_count + 1
+  end
+  
+  logInfo("Current State Information", stateInfo)
+  logInfo("=== Debug State Completed ===")
+  
+  return stateInfo
+end
+
+-- Debug function: Output mint status
+local function debugMintStatus()
+  if not TEST_MODE then
+    logError("Debug functions disabled in production mode")
+    return false, "Test mode disabled"
+  end
+  
+  logInfo("=== Debug Mint Status ===")
+  
+  local mintStatus = {
+    is_minting_active = isMintingActive(),
+    total_supply = MAX_SUPPLY,
+    current_supply = State.total_minted,
+    remaining = getRemainingSupply(),
+    mint_price = MINT_PRICE,
+    mint_price_usda = "1 USDA",
+    lucky_numbers_used = State.lucky_number_used_count or 0,
+    sentiment_stats = getMarketSentimentStats()
+  }
+  
+  logInfo("Mint Status Information", mintStatus)
+  logInfo("=== Debug Mint Status Completed ===")
+  
+  return mintStatus
+end
+
+-- Test reset function (development only)
+local function resetForTesting()
+  if not TEST_MODE then
+    logError("Reset functions disabled in production mode")
+    return false, "Test mode disabled"
+  end
+  
+  logInfo("=== Resetting State for Testing ===")
+  logInfo("WARNING: This will reset all data - use only in development!")
+  
+  -- Reset all state variables
+  State.total_minted = 0
+  State.mint_records = {}
+  State.nft_owners = {}
+  State.nft_balances = {}
+  State.nft_metadata = {}
+  State.payment_records = {}
+  State.processed_transactions = {}
+  State.total_revenue = 0
+  State.revenue_records = {}
+  State.process_balance = 0
+  State.lucky_number_index = 0
+  State.lucky_number_used_count = 0
+  State.market_sentiment_records = {}
+  
+  logInfo("State reset completed for testing")
+  logInfo("=== Reset Completed ===")
+  
+  return true, "Reset completed"
+end
+
+-- Run all tests
+local function runAllTests()
+  if not TEST_MODE then
+    logError("Test functions disabled in production mode")
+    return false, "Test mode disabled"
+  end
+  
+  logInfo("=== Running All Tests ===")
+  
+  local results = {}
+  
+  -- Run basic info test
+  local infoSuccess, infoResult = testBasicInfo()
+  results.basicInfo = {success = infoSuccess, result = infoResult}
+  
+  -- Run mint flow test
+  local flowSuccess, flowResult = testMintFlow()
+  results.mintFlow = {success = flowSuccess, result = flowResult}
+  
+  -- Run limitations test
+  local limitSuccess, limitResult = testLimitations()
+  results.limitations = {success = limitSuccess, result = limitResult}
+  
+  -- Debug state
+  local stateResult = debugState()
+  results.debugState = stateResult
+  
+  -- Debug mint status
+  local statusResult = debugMintStatus()
+  results.debugMintStatus = statusResult
+  
+  logInfo("=== All Tests Completed ===", {
+    basicInfo = results.basicInfo.success,
+    mintFlow = results.mintFlow.success,
+    limitations = results.limitations.success
+  })
+  
+  return results
+end
+
+-- ============================================================================
 -- EXPORT MODULE (for testing and external access)
 -- ============================================================================
 
@@ -2105,6 +3223,36 @@ BeliefFiNFT = {
   updateMetadata = updateMetadata,
   getMetadataStats = getMetadataStats,
   regenerateAllMetadata = regenerateAllMetadata,
+  
+  -- Mint Execution functions (Phase 4-2)
+  generateNFTId = generateNFTId,
+  setOwnership = setOwnership,
+  updateSupply = updateSupply,
+  recordMintSuccess = recordMintSuccess,
+  mintAtomicAsset = mintAtomicAsset,
+  executeFullMint = executeFullMint,
+  getNFTInfo = getNFTInfo,
+  getNFTsByOwner = getNFTsByOwner,
+  transferNFT = transferNFT,
+  
+  -- Error Handling functions (Phase 6)
+  handleError = handleError,
+  sendError = sendError,
+  validateInput = validateInput,
+  validateBusinessRules = validateBusinessRules,
+  rollbackMint = rollbackMint,
+  safeExecute = safeExecute,
+  attemptRecovery = attemptRecovery,
+  getErrorSummary = getErrorSummary,
+  
+  -- Testing functions (Phase 7)
+  testBasicInfo = testBasicInfo,
+  testMintFlow = testMintFlow,
+  testLimitations = testLimitations,
+  debugState = debugState,
+  debugMintStatus = debugMintStatus,
+  resetForTesting = resetForTesting,
+  runAllTests = runAllTests,
   
   -- State access
   getState = function() return State end,
