@@ -241,6 +241,93 @@ local function createSuccessResponse(data)
 end
 
 -- ============================================================================
+-- PUBLIC MINT FUNCTIONS (Phase 1-2)
+-- ============================================================================
+
+-- Check if Public Mint is enabled
+local function checkPublicMintEnabled()
+  -- Public Mint is always enabled in MVP
+  return State.public_mint_enabled
+end
+
+-- Validate mint request from address
+local function validateMintRequest(address)
+  -- Check if address format is valid
+  if not isValidAddress(address) then
+    return false, "Invalid address format"
+  end
+  
+  -- Check if minting is globally enabled
+  if not State.mint_enabled then
+    return false, "Minting is currently disabled"
+  end
+  
+  -- Check if Public Mint is enabled
+  if not checkPublicMintEnabled() then
+    return false, "Public mint is not enabled"
+  end
+  
+  -- Check if address has already minted
+  if State.minted_by_address[address] then
+    return false, "Address has already minted the maximum allowed (1 NFT)"
+  end
+  
+  -- Check supply availability
+  if State.total_minted >= MAX_SUPPLY then
+    return false, "All NFTs have been minted (100/100)"
+  end
+  
+  return true, "Mint request is valid"
+end
+
+-- Check if an address can mint (simplified check)
+local function canMint(address)
+  local isValid, message = validateMintRequest(address)
+  return isValid, message
+end
+
+-- Get mint status for an address
+local function getMintStatus(address)
+  local status = {
+    total_supply = MAX_SUPPLY,
+    current_supply = State.total_minted,
+    remaining = getRemainingSupply(),
+    mint_price = MINT_PRICE,
+    mint_enabled = State.mint_enabled,
+    public_mint_enabled = checkPublicMintEnabled()
+  }
+  
+  if address and isValidAddress(address) then
+    status.address = address
+    status.has_minted = State.minted_by_address[address] or false
+    status.can_mint, status.reason = canMint(address)
+  end
+  
+  return status
+end
+
+-- Toggle minting (admin function - for emergency pause)
+local function toggleMinting(enabled)
+  State.mint_enabled = enabled
+  logInfo("Minting " .. (enabled and "enabled" or "disabled"))
+  return State.mint_enabled
+end
+
+-- Get public mint configuration
+local function getPublicMintConfig()
+  return {
+    enabled = checkPublicMintEnabled(),
+    max_per_address = MINT_LIMIT_PER_ADDRESS,
+    total_supply = MAX_SUPPLY,
+    minted = State.total_minted,
+    available = getRemainingSupply(),
+    price = MINT_PRICE,
+    price_token = "USDA",
+    status = State.mint_enabled and "active" or "paused"
+  }
+end
+
+-- ============================================================================
 -- INITIALIZATION
 -- ============================================================================
 
@@ -283,6 +370,14 @@ BeliefFiNFT = {
   isMintingActive = isMintingActive,
   getBalance = getBalance,
   
+  -- Public Mint functions (Phase 1-2)
+  checkPublicMintEnabled = checkPublicMintEnabled,
+  validateMintRequest = validateMintRequest,
+  canMint = canMint,
+  getMintStatus = getMintStatus,
+  getPublicMintConfig = getPublicMintConfig,
+  toggleMinting = toggleMinting,
+  
   -- State access
   getState = function() return State end,
   getTotalMinted = function() return State.total_minted end,
@@ -291,7 +386,8 @@ BeliefFiNFT = {
   padNumber = padNumber,
   formatNFTName = formatNFTName,
   generateNextNFTId = generateNextNFTId,
-  getCurrentTimestamp = getCurrentTimestamp
+  getCurrentTimestamp = getCurrentTimestamp,
+  recordMinting = recordMinting
 }
 
 -- ============================================================================
