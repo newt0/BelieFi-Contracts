@@ -2945,7 +2945,7 @@ local function testMintFlow(testAddress)
   logInfo("NFT ID generated", {nft_id = nftId})
   
   -- Test metadata generation
-  local metadata = generateNFTMetadata(nftId, testAddress, luckyNumber)
+  local metadata = generateNFTMetadata(nftId, testAddress, luckyNumber, sentiment)
   logInfo("Metadata generated", {nft_id = nftId, metadata_preview = {
     name = metadata.name,
     lucky_number = metadata.lucky_number,
