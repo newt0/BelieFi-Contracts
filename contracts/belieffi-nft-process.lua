@@ -141,6 +141,7 @@ State.public_mint_enabled = State.public_mint_enabled or true
 
 -- Address Management
 State.minted_by_address = State.minted_by_address or {} -- address -> boolean
+State.mint_records = State.mint_records or {} -- address -> mint_info
 State.nft_owners = State.nft_owners or {} -- nft_id -> owner_address
 State.nft_balances = State.nft_balances or {} -- address -> count
 
@@ -162,9 +163,12 @@ State.refund_history = State.refund_history or {} -- tx_id -> refund_info
 -- Lucky Number Management (Phase 2-1)
 State.lucky_numbers_assigned = State.lucky_numbers_assigned or {} -- nft_id -> lucky_number
 State.current_lucky_index = State.current_lucky_index or 1 -- Next index to use from LUCKY_NUMBERS
+State.lucky_number_index = State.lucky_number_index or 0
+State.lucky_number_used_count = State.lucky_number_used_count or 0
 
 -- Market Sentiment Management (Phase 2-2)
 State.market_sentiments = State.market_sentiments or {} -- nft_id -> market_sentiment
+State.market_sentiment_records = State.market_sentiment_records or {}
 State.sentiment_statistics = State.sentiment_statistics or {
   bearish = 0,
   neutral = 0,
