@@ -41,6 +41,25 @@ local MINT_PRICE = "1000000000000" -- 1 USDA (12 decimals)
 local USDA_PROCESS_ID = "FBt9A5GA_KXMMSxA2DJ0xZbAq8sLLU2ak-YJe9zDvg8" -- AstroUSD Process ID
 
 -- ============================================================================
+-- LUCKY NUMBERS CONFIGURATION (Phase 2-1)
+-- ============================================================================
+
+-- TODO: Replace with RandAO integration in the future
+-- Hardcoded lucky numbers for MVP (100 values, range 0-999)
+local LUCKY_NUMBERS = {
+  42, 777, 123, 888, 256, 369, 555, 999, 111, 666,
+  234, 789, 456, 321, 654, 87, 912, 345, 678, 210,
+  543, 876, 159, 482, 715, 38, 961, 294, 527, 860,
+  183, 416, 749, 82, 315, 648, 981, 214, 547, 880,
+  113, 446, 779, 12, 345, 678, 911, 244, 577, 810,
+  143, 476, 709, 42, 375, 608, 941, 274, 507, 840,
+  173, 406, 739, 72, 305, 638, 971, 204, 537, 870,
+  103, 436, 769, 2, 335, 668, 901, 234, 567, 800,
+  133, 466, 799, 32, 365, 698, 931, 264, 597, 830,
+  163, 496, 729, 62, 395, 628, 961, 294, 527, 860
+}
+
+-- ============================================================================
 -- GLOBAL STATE INITIALIZATION
 -- ============================================================================
 
@@ -72,6 +91,10 @@ State.process_balance = State.process_balance or "0"
 -- Transaction Processing
 State.processed_transactions = State.processed_transactions or {} -- tx_id -> boolean
 State.pending_refunds = State.pending_refunds or {} -- address -> amount
+
+-- Lucky Number Management (Phase 2-1)
+State.lucky_numbers_assigned = State.lucky_numbers_assigned or {} -- nft_id -> lucky_number
+State.current_lucky_index = State.current_lucky_index or 1 -- Next index to use from LUCKY_NUMBERS
 
 -- Process Information
 State.process_owner = State.process_owner or ao.id
@@ -568,6 +591,126 @@ local function checkSupplyLimits()
 end
 
 -- ============================================================================
+-- LUCKY NUMBER FUNCTIONS (Phase 2-1)
+-- ============================================================================
+
+-- Initialize lucky numbers (called on process start)
+local function initializeLuckyNumbers()
+  -- TODO: Replace with RandAO integration in the future
+  -- Currently using hardcoded values
+  logInfo("Lucky Numbers initialized with hardcoded values (MVP)")
+  logInfo("Lucky Numbers count: " .. #LUCKY_NUMBERS)
+  
+  -- Validate we have enough lucky numbers
+  if #LUCKY_NUMBERS < MAX_SUPPLY then
+    logError("Insufficient lucky numbers defined", {
+      required = MAX_SUPPLY,
+      available = #LUCKY_NUMBERS
+    })
+    return false
+  end
+  
+  State.current_lucky_index = State.current_lucky_index or 1
+  return true
+end
+
+-- Get the next lucky number for minting
+local function getNextLuckyNumber()
+  -- Check if we have remaining lucky numbers
+  if State.current_lucky_index > #LUCKY_NUMBERS then
+    logError("No more lucky numbers available", {
+      current_index = State.current_lucky_index,
+      max_index = #LUCKY_NUMBERS
+    })
+    return nil
+  end
+  
+  -- Get the lucky number at current index
+  local luckyNumber = LUCKY_NUMBERS[State.current_lucky_index]
+  
+  -- Validate lucky number is in range
+  if luckyNumber < 0 or luckyNumber > 999 then
+    logError("Lucky number out of range", {
+      lucky_number = luckyNumber,
+      index = State.current_lucky_index
+    })
+    return nil
+  end
+  
+  -- Increment index for next use
+  State.current_lucky_index = State.current_lucky_index + 1
+  
+  return luckyNumber
+end
+
+-- Record lucky number assignment for an NFT
+local function recordLuckyNumber(nftId, luckyNumber)
+  -- Validate inputs
+  if not nftId or nftId <= 0 or nftId > MAX_SUPPLY then
+    logError("Invalid NFT ID for lucky number", {nft_id = nftId})
+    return false
+  end
+  
+  if not luckyNumber or luckyNumber < 0 or luckyNumber > 999 then
+    logError("Invalid lucky number", {lucky_number = luckyNumber})
+    return false
+  end
+  
+  -- Check if already assigned
+  if State.lucky_numbers_assigned[nftId] then
+    logError("Lucky number already assigned", {
+      nft_id = nftId,
+      existing_number = State.lucky_numbers_assigned[nftId]
+    })
+    return false
+  end
+  
+  -- Record the assignment
+  State.lucky_numbers_assigned[nftId] = luckyNumber
+  
+  logInfo(string.format("Lucky number %d assigned to NFT #%d", luckyNumber, nftId))
+  
+  return true
+end
+
+-- Get lucky number for a specific NFT
+local function getLuckyNumberForNFT(nftId)
+  return State.lucky_numbers_assigned[nftId]
+end
+
+-- Get lucky number statistics
+local function getLuckyNumberStats()
+  local stats = {
+    total_assigned = 0,
+    next_index = State.current_lucky_index,
+    remaining = #LUCKY_NUMBERS - (State.current_lucky_index - 1),
+    assignments = {}
+  }
+  
+  -- Count assignments and build list
+  for nftId, luckyNumber in pairs(State.lucky_numbers_assigned) do
+    stats.total_assigned = stats.total_assigned + 1
+    table.insert(stats.assignments, {
+      nft_id = nftId,
+      lucky_number = luckyNumber
+    })
+  end
+  
+  -- Sort assignments by NFT ID
+  table.sort(stats.assignments, function(a, b) return a.nft_id < b.nft_id end)
+  
+  return stats
+end
+
+-- Preview what the next lucky number would be (without consuming it)
+local function previewNextLuckyNumber()
+  if State.current_lucky_index > #LUCKY_NUMBERS then
+    return nil
+  end
+  return LUCKY_NUMBERS[State.current_lucky_index]
+end
+
+-- ============================================================================
 -- INITIALIZATION
 -- ============================================================================
 
@@ -579,6 +722,13 @@ local function initializeProcess()
   logInfo("Mint Price: " .. MINT_PRICE .. " (1 USDA)")
   logInfo("Public Mint: Enabled")
   
+  -- Initialize Lucky Numbers
+  local luckyInit = initializeLuckyNumbers()
+  if not luckyInit then
+    logError("Failed to initialize Lucky Numbers")
+    return false
+  end
+  
   -- Set initial process tags
   ao.id = ao.id or "PROCESS_ID_PLACEHOLDER"
   
@@ -587,8 +737,13 @@ end
 
 -- Run initialization on process start
 if not State.initialized then
-  initializeProcess()
-  State.initialized = true
+  local success = initializeProcess()
+  if success then
+    State.initialized = true
+    logInfo("Process initialization completed successfully")
+  else
+    logError("Process initialization failed")
+  end
 end
 
 -- ============================================================================
@@ -625,6 +780,14 @@ BeliefFiNFT = {
   validateMintRequestDetailed = validateMintRequestDetailed,
   getMintHistory = getMintHistory,
   checkSupplyLimits = checkSupplyLimits,
+  
+  -- Lucky Number functions (Phase 2-1)
+  initializeLuckyNumbers = initializeLuckyNumbers,
+  getNextLuckyNumber = getNextLuckyNumber,
+  recordLuckyNumber = recordLuckyNumber,
+  getLuckyNumberForNFT = getLuckyNumberForNFT,
+  getLuckyNumberStats = getLuckyNumberStats,
+  previewNextLuckyNumber = previewNextLuckyNumber,
   
   -- State access
   getState = function() return State end,
