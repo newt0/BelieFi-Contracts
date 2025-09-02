@@ -409,8 +409,12 @@ local function logError(message, context)
 end
 
 -- Log info (basic logging for MVP)
-local function logInfo(message)
+local function logInfo(message, context)
   print("[INFO] " .. getCurrentTimestamp() .. " - " .. message)
+  if context then
+    -- Mirror logError context printing for consistency
+    print("[CONTEXT] " .. json.encode(context))
+  end
 end
 
 -- Create error response
@@ -3635,14 +3639,14 @@ Handlers.add("Transfer", Handlers.utils.hasMatchingTag("Action", "Transfer"), fu
   -- SBT Restriction Warning (for future implementation)
   logInfo("WARNING: Transfer executed - future SBT conversion will restrict transfers", {nft_id = nftId})
   
-  -- Execute transfer
-  local transferResult = transferNFT(nftId, sender, recipient)
-  if not transferResult.success then
-    logError("Transfer execution failed", {error = transferResult.message})
+  -- Execute transfer (transferNFT returns boolean, message)
+  local ok, err = transferNFT(nftId, sender, recipient)
+  if not ok then
+    logError("Transfer execution failed", {error = err})
     ao.send({
       Target = msg.From,
       Action = "Transfer-Error",
-      Error = transferResult.message
+      Error = err
     })
     return
   end
@@ -4725,7 +4729,6 @@ BelieFiNFT = {
   
   -- Market Sentiment functions (Phase 2-2)
   initializeSentimentPatterns = initializeSentimentPatterns,
-  getSentimentByLuckyNumber = getSentimentByLuckyNumber,
   generateMarketSentiment = generateMarketSentiment,
   formatSentimentData = formatSentimentData,
   recordMarketSentiment = recordMarketSentiment,
