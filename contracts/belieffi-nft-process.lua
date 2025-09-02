@@ -19,6 +19,7 @@
 local json = require("json")
 local ao = require("ao")
 local bint = require(".bint")(256)
+local randomModule = require("random")(json)
 
 -- ============================================================================
 -- CONSTANTS & CONFIGURATION
@@ -162,6 +163,11 @@ State.refund_history = State.refund_history or {} -- tx_id -> refund_info
 -- Lucky Number Management (Phase 2-1)
 State.lucky_numbers_assigned = State.lucky_numbers_assigned or {} -- nft_id -> lucky_number
 State.current_lucky_index = State.current_lucky_index or 1 -- Next index to use from LUCKY_NUMBERS
+
+-- RandAO Integration
+State.pending_mints = State.pending_mints or {} -- callback_id -> {nft_id, owner, timestamp}
+State.randao_enabled = State.randao_enabled or true -- Toggle RandAO vs hardcoded lucky numbers
+State.randao_fallback_timeout = State.randao_fallback_timeout or 30000 -- 30 seconds timeout
 
 -- Market Sentiment Management (Phase 2-2)
 State.market_sentiments = State.market_sentiments or {} -- nft_id -> market_sentiment
@@ -989,6 +995,84 @@ local function generateNFTData(nftId)
   }, nil
 end
 
+-- RandAO Integration: Request random number for NFT
+local function requestRandomForNFT(nftId, owner, paymentDetails)
+  -- Generate unique callback ID
+  local callbackId = randomModule.generateUUID()
+  
+  -- Store pending mint information
+  State.pending_mints[callbackId] = {
+    nft_id = nftId,
+    owner = owner,
+    payment_details = paymentDetails,
+    timestamp = getCurrentTimestamp(),
+    status = "pending"
+  }
+  
+  -- Request random number from RandAO
+  randomModule.requestRandom(callbackId)
+  
+  logInfo("Random number requested for NFT", {
+    nft_id = nftId,
+    callback_id = callbackId,
+    owner = owner
+  })
+  
+  return callbackId
+end
+
+-- Complete NFT minting with random lucky number
+local function completeMintWithRandom(callbackId, entropy)
+  local pendingMint = State.pending_mints[callbackId]
+  if not pendingMint then
+    logError("No pending mint found for callback", {callback_id = callbackId})
+    return nil, "No pending mint found"
+  end
+  
+  -- Generate lucky number from entropy (0-999 range)
+  local luckyNumber = math.floor(tonumber(entropy) % 1000)
+  
+  -- Generate market sentiment based on lucky number
+  local marketSentiment = generateMarketSentiment(luckyNumber)
+  if not marketSentiment then
+    return nil, "Failed to generate market sentiment"
+  end
+  
+  local nftId = pendingMint.nft_id
+  local owner = pendingMint.owner
+  
+  -- Record lucky number and market sentiment
+  recordLuckyNumber(nftId, luckyNumber)
+  recordMarketSentiment(nftId, marketSentiment)
+  
+  -- Generate and store NFT metadata
+  local metadata, metadataError = generateNFTMetadata(nftId, owner, luckyNumber, marketSentiment)
+  if metadata then
+    local metadataStored, storeError = storeNFTMetadata(nftId, metadata)
+    if not metadataStored then
+      logError("Failed to store metadata", {nft_id = nftId, error = storeError})
+    end
+  end
+  
+  -- Update pending mint status
+  pendingMint.status = "completed"
+  pendingMint.lucky_number = luckyNumber
+  pendingMint.completed_at = getCurrentTimestamp()
+  
+  logInfo("NFT mint completed with RandAO", {
+    nft_id = nftId,
+    lucky_number = luckyNumber,
+    sentiment = marketSentiment.ao_sentiment
+  })
+  
+  return {
+    nft_id = nftId,
+    lucky_number = luckyNumber,
+    market_sentiment = marketSentiment,
+    owner = owner
+  }, nil
+end
+
 -- ============================================================================
 -- PAYMENT PROCESSING FUNCTIONS (Phase 3-1)
 -- ============================================================================
@@ -1193,14 +1277,7 @@ local function processPaymentAndMint(paymentDetails)
     return createErrorResponse("All NFTs have been minted")
   end
   
-  local nftData, error = generateNFTData(nftId)
-  if not nftData then
-    processRefund(fromAddress, amount, "Failed to generate NFT data: " .. (error or "unknown"), txId)
-    markTransactionProcessed(txId, {error = error})
-    return createErrorResponse("Mint failed: " .. (error or "unknown error"))
-  end
-  
-  -- Record mint and assignments
+  -- Record mint and assignments first
   local success, mintError = recordMint(fromAddress, nftId)
   if not success then
     processRefund(fromAddress, amount, mintError, txId)
@@ -1208,21 +1285,53 @@ local function processPaymentAndMint(paymentDetails)
     return createErrorResponse(mintError)
   end
   
-  -- Record lucky number and market sentiment
-  recordLuckyNumber(nftId, nftData.lucky_number)
-  recordMarketSentiment(nftId, nftData.market_sentiment)
-  
-  -- Generate and store NFT metadata
-  local metadata, metadataError = generateNFTMetadata(nftId, fromAddress, nftData.lucky_number, nftData.market_sentiment)
-  if metadata then
-    local metadataStored, storeError = storeNFTMetadata(nftId, metadata)
-    if not metadataStored then
-      logError("Failed to store metadata", {nft_id = nftId, error = storeError})
+  -- Check if RandAO is enabled
+  if State.randao_enabled then
+    -- Use RandAO for random lucky number generation
+    local callbackId = requestRandomForNFT(nftId, fromAddress, paymentDetails)
+    
+    -- Mark transaction as pending RandAO
+    markTransactionProcessed(txId, {
+      nft_id = nftId,
+      mint_pending = true,
+      callback_id = callbackId
+    })
+    
+    -- Return pending response
+    return {
+      status = "pending",
+      message = "NFT mint initiated, waiting for random number generation",
+      data = {
+        nft_id = nftId,
+        callback_id = callbackId,
+        owner = fromAddress
+      }
+    }
+  else
+    -- Use hardcoded lucky numbers (fallback)
+    local nftData, error = generateNFTData(nftId)
+    if not nftData then
+      processRefund(fromAddress, amount, "Failed to generate NFT data: " .. (error or "unknown"), txId)
+      markTransactionProcessed(txId, {error = error})
+      return createErrorResponse("Mint failed: " .. (error or "unknown error"))
+    end
+    
+    -- Record lucky number and market sentiment
+    recordLuckyNumber(nftId, nftData.lucky_number)
+    recordMarketSentiment(nftId, nftData.market_sentiment)
+    
+    -- Generate and store NFT metadata
+    local metadata, metadataError = generateNFTMetadata(nftId, fromAddress, nftData.lucky_number, nftData.market_sentiment)
+    if metadata then
+      local metadataStored, storeError = storeNFTMetadata(nftId, metadata)
+      if not metadataStored then
+        logError("Failed to store metadata", {nft_id = nftId, error = storeError})
+        -- Continue anyway as mint was successful
+      end
+    else
+      logError("Failed to generate metadata", {nft_id = nftId, error = metadataError})
       -- Continue anyway as mint was successful
     end
-  else
-    logError("Failed to generate metadata", {nft_id = nftId, error = metadataError})
-    -- Continue anyway as mint was successful
   end
   
   -- Record revenue using enhanced function
@@ -2681,6 +2790,227 @@ Handlers.add("Mint-Status", Handlers.utils.hasMatchingTag("Action", "Mint-Status
     Data = json.encode({
       status = "success",
       data = statusData
+    })
+  })
+end)
+
+-- Check and handle timed out pending mints
+local function checkPendingMintTimeouts()
+  local currentTime = getCurrentTimestamp()
+  local timedOutMints = {}
+  
+  for callbackId, pendingMint in pairs(State.pending_mints) do
+    if pendingMint.status == "pending" then
+      local elapsed = currentTime - pendingMint.timestamp
+      if elapsed > State.randao_fallback_timeout then
+        table.insert(timedOutMints, {
+          callback_id = callbackId,
+          pending_mint = pendingMint
+        })
+      end
+    end
+  end
+  
+  -- Process timed out mints with fallback
+  for _, item in ipairs(timedOutMints) do
+    local callbackId = item.callback_id
+    local pendingMint = item.pending_mint
+    local nftId = pendingMint.nft_id
+    local owner = pendingMint.owner
+    
+    logInfo("Processing timed out mint with fallback", {
+      nft_id = nftId,
+      callback_id = callbackId,
+      owner = owner
+    })
+    
+    -- Use fallback lucky number generation
+    local nftData, error = generateNFTData(nftId)
+    if nftData then
+      recordLuckyNumber(nftId, nftData.lucky_number)
+      recordMarketSentiment(nftId, nftData.market_sentiment)
+      
+      local metadata = generateNFTMetadata(nftId, owner, nftData.lucky_number, nftData.market_sentiment)
+      if metadata then
+        storeNFTMetadata(nftId, metadata)
+      end
+      
+      -- Send timeout notification with fallback data
+      ao.send({
+        Target = owner,
+        Action = "Mint-Success-Timeout",
+        ["NFT-ID"] = tostring(nftId),
+        ["Lucky-Number"] = tostring(nftData.lucky_number),
+        ["Market-Sentiment"] = nftData.market_sentiment.ao_sentiment,
+        ["Timeout-Fallback"] = "true",
+        Data = json.encode(nftData)
+      })
+      
+      -- Update status
+      pendingMint.status = "completed_timeout_fallback"
+      pendingMint.completed_at = currentTime
+    else
+      logError("Failed to generate fallback data for timed out mint", {
+        nft_id = nftId,
+        error = error
+      })
+    end
+  end
+  
+  return #timedOutMints
+end
+
+-- RandAO Random-Response Handler
+Handlers.add("Random-Response", Handlers.utils.hasMatchingTag("Action", "Random-Response"), function(msg)
+  logInfo("Random-Response received from: " .. (msg.From or "unknown"))
+  
+  -- Process random response from RandAO
+  local success, callbackId, entropy = pcall(function()
+    return randomModule.processRandomResponse(msg.From, msg.Data)
+  end)
+  
+  if not success then
+    logError("Failed to process random response", {error = callbackId})
+    return
+  end
+  
+  logInfo("Processing random response", {
+    callback_id = callbackId,
+    entropy = entropy
+  })
+  
+  -- Complete the mint with the random number
+  local mintResult, error = completeMintWithRandom(callbackId, entropy)
+  
+  if mintResult then
+    local pendingMint = State.pending_mints[callbackId]
+    
+    -- Send success notification to the NFT owner
+    ao.send({
+      Target = mintResult.owner,
+      Action = "Mint-Success",
+      ["NFT-ID"] = tostring(mintResult.nft_id),
+      ["Lucky-Number"] = tostring(mintResult.lucky_number),
+      ["Market-Sentiment"] = mintResult.market_sentiment.ao_sentiment,
+      ["Confidence-Score"] = tostring(mintResult.market_sentiment.confidence_score),
+      ["Callback-ID"] = callbackId,
+      Data = json.encode(mintResult)
+    })
+    
+    -- Record revenue for the completed mint
+    local amount = pendingMint.payment_details.amount
+    recordRevenue(mintResult.nft_id, amount)
+    
+    logInfo("NFT mint completed via RandAO", {
+      nft_id = mintResult.nft_id,
+      owner = mintResult.owner,
+      lucky_number = mintResult.lucky_number
+    })
+  else
+    logError("Failed to complete mint with random", {
+      callback_id = callbackId,
+      error = error
+    })
+    
+    -- Handle error - potentially refund or retry
+    local pendingMint = State.pending_mints[callbackId]
+    if pendingMint then
+      -- Fall back to hardcoded lucky number
+      local nftId = pendingMint.nft_id
+      local owner = pendingMint.owner
+      
+      logInfo("Falling back to hardcoded lucky number for NFT", {nft_id = nftId})
+      
+      local nftData, genError = generateNFTData(nftId)
+      if nftData then
+        recordLuckyNumber(nftId, nftData.lucky_number)
+        recordMarketSentiment(nftId, nftData.market_sentiment)
+        
+        local metadata = generateNFTMetadata(nftId, owner, nftData.lucky_number, nftData.market_sentiment)
+        if metadata then
+          storeNFTMetadata(nftId, metadata)
+        end
+        
+        -- Send success with fallback
+        ao.send({
+          Target = owner,
+          Action = "Mint-Success",
+          ["NFT-ID"] = tostring(nftId),
+          ["Lucky-Number"] = tostring(nftData.lucky_number),
+          ["Market-Sentiment"] = nftData.market_sentiment.ao_sentiment,
+          ["Fallback"] = "true",
+          Data = json.encode(nftData)
+        })
+        
+        -- Update pending mint status
+        pendingMint.status = "completed_with_fallback"
+      end
+    end
+  end
+end)
+
+-- Check-Pending-Mints Handler: Manually trigger timeout check
+Handlers.add("Check-Pending-Mints", Handlers.utils.hasMatchingTag("Action", "Check-Pending-Mints"), function(msg)
+  logInfo("Checking pending mints for timeouts")
+  
+  local timedOutCount = checkPendingMintTimeouts()
+  
+  ao.send({
+    Target = msg.From,
+    Action = "Check-Pending-Mints-Response",
+    ["Timed-Out-Count"] = tostring(timedOutCount),
+    Data = json.encode({
+      status = "success",
+      timed_out_count = timedOutCount,
+      timestamp = getCurrentTimestamp()
+    })
+  })
+end)
+
+-- Toggle-RandAO Handler: Enable/disable RandAO integration
+Handlers.add("Toggle-RandAO", Handlers.utils.hasMatchingTag("Action", "Toggle-RandAO"), function(msg)
+  local enable = msg.Tags.Enable == "true"
+  
+  State.randao_enabled = enable
+  
+  logInfo("RandAO integration toggled", {enabled = enable})
+  
+  ao.send({
+    Target = msg.From,
+    Action = "Toggle-RandAO-Response",
+    ["RandAO-Enabled"] = tostring(State.randao_enabled),
+    Data = json.encode({
+      status = "success",
+      randao_enabled = State.randao_enabled
+    })
+  })
+end)
+
+-- Get-Pending-Mints Handler: Get information about pending mints
+Handlers.add("Get-Pending-Mints", Handlers.utils.hasMatchingTag("Action", "Get-Pending-Mints"), function(msg)
+  local pendingList = {}
+  
+  for callbackId, pendingMint in pairs(State.pending_mints) do
+    if pendingMint.status == "pending" then
+      table.insert(pendingList, {
+        callback_id = callbackId,
+        nft_id = pendingMint.nft_id,
+        owner = pendingMint.owner,
+        timestamp = pendingMint.timestamp,
+        elapsed = getCurrentTimestamp() - pendingMint.timestamp
+      })
+    end
+  end
+  
+  ao.send({
+    Target = msg.From,
+    Action = "Get-Pending-Mints-Response",
+    ["Pending-Count"] = tostring(#pendingList),
+    Data = json.encode({
+      status = "success",
+      pending_mints = pendingList,
+      randao_enabled = State.randao_enabled,
+      timeout_threshold = State.randao_fallback_timeout
     })
   })
 end)
