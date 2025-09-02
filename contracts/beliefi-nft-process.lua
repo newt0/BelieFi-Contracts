@@ -97,13 +97,8 @@ local SENTIMENT_PATTERNS = {
   }
 }
 
--- Sentiment selection ranges based on lucky number
-local SENTIMENT_RANGES = {
-  {min = 0,   max = 199, sentiment = "bearish"},
-  {min = 200, max = 399, sentiment = "neutral"},
-  {min = 400, max = 699, sentiment = "bullish"},
-  {min = 700, max = 999, sentiment = "very_bullish"}
-}
+-- Note: SENTIMENT_RANGES removed - Market Sentiment is now independent from Lucky Numbers
+-- Market sentiment is determined by ApusAI analysis of $AO price data only
 
 -- ============================================================================
 -- NFT METADATA CONFIGURATION (Phase 4-1)
@@ -1655,25 +1650,9 @@ local function initializeSentimentPatterns()
   return true
 end
 
--- Get sentiment type based on lucky number
-local function getSentimentByLuckyNumber(luckyNumber)
-  -- Validate input
-  if not luckyNumber or luckyNumber < 0 or luckyNumber > 999 then
-    logError("Invalid lucky number for sentiment", {lucky_number = luckyNumber})
-    return nil
-  end
-  
-  -- Find matching range
-  for _, range in ipairs(SENTIMENT_RANGES) do
-    if luckyNumber >= range.min and luckyNumber <= range.max then
-      return range.sentiment
-    end
-  end
-  
-  -- Default fallback (should not happen with valid input)
-  logError("No sentiment range found for lucky number", {lucky_number = luckyNumber})
-  return "neutral"
-end
+-- Note: getSentimentByLuckyNumber function removed
+-- Market sentiment is now independent from Lucky Numbers
+-- Sentiment is determined by ApusAI analysis of $AO market data
 
 -- Generate hardcoded sentiment (fallback)
 local function generateHardcodedSentiment()
@@ -1958,8 +1937,8 @@ local function completeMintWithRandom(callbackId, entropy)
   -- Generate lucky number from entropy (0-999 range)
   local luckyNumber = math.floor(tonumber(entropy) % 1000)
   
-  -- Generate market sentiment based on lucky number
-  local marketSentiment = generateMarketSentiment(luckyNumber)
+  -- Generate market sentiment (independent from lucky number, based on $AO price data)
+  local marketSentiment = generateMarketSentiment()
   if not marketSentiment then
     return nil, "Failed to generate market sentiment"
   end
