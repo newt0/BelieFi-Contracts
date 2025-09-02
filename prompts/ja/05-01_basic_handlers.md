@@ -31,7 +31,7 @@ Current_Supply: 現在の発行済み数,
 Mint_Price: "1 USDA",
 Mint_Status: "active"|"sold_out",
 Mint_Type: "Public Mint",
-Contract_Type: "Atomic Asset - BeliefFi NFT"
+Contract_Type: "Atomic Asset - BelieFi NFT"
 }
 
 ### Balance Handler

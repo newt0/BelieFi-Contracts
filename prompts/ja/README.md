@@ -1,8 +1,8 @@
-# BeliefFi 実装プロンプト一覧（MVP 版）
+# BelieFi 実装プロンプト一覧（MVP 版）
 
 ## 概要
 
-本ディレクトリには、BeliefFi DeFAI NFT プロジェクトの Atomic Assets AO Process を段階的に実装するためのプロンプトが含まれています。ハッカソン向け MVP として、Public Mint 方式で簡素化された実装となっています。
+本ディレクトリには、BelieFi DeFAI NFT プロジェクトの Atomic Assets AO Process を段階的に実装するためのプロンプトが含まれています。ハッカソン向け MVP として、Public Mint 方式で簡素化された実装となっています。
 
 ## 技術仕様
 

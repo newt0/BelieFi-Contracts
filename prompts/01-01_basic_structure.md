@@ -1,4 +1,4 @@
-Implement the Atomic Assets AO Process for the BeliefFi DeFAI NFT project.
+Implement the Atomic Assets AO Process for the BelieFi DeFAI NFT project.
 
 Requirements:
 

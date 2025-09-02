@@ -21,7 +21,7 @@ name: "AO MAXI #[001-100]",
 description: "Believing in AO's growth",
 strategy: "Maximize $AO",
 image: "Fixed image URL",
-external_url: "https://belieffi.arweave.net/nft/[nft_id]",
+external_url: "https://beliefi.arweave.net/nft/[nft_id]",
 lucky_number: 0-999 numeric value,
 market_sentiment: {
 ao_sentiment: "bullish"|"bearish"|"neutral"|"very_bullish",

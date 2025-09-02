@@ -14,7 +14,7 @@ aos
 
 ### Step 2: Processをロード
 ```lua
-.load contracts/belieffi-nft-process.lua
+.load contracts/beliefi-nft-process.lua
 ```
 
 ### Step 3: 依存関係を確認

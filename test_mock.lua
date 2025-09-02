@@ -1,4 +1,4 @@
--- Test Mock for BeliefFi NFT Process
+-- Test Mock for BelieFi NFT Process
 -- This file provides mock AO environment for local testing
 
 -- Mock AO libraries
@@ -66,10 +66,10 @@ Send = function(msg)
 end
 
 -- Load the main contract
-dofile("contracts/belieffi-nft-process.lua")
+dofile("contracts/beliefi-nft-process.lua")
 
 -- Test execution
-print("=== BeliefFi NFT Process Test Environment ===")
+print("=== BelieFi NFT Process Test Environment ===")
 print("Available test functions:")
 print("- testBasicInfo()")
 print("- testMintFlow()")
