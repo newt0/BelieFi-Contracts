@@ -19,6 +19,7 @@ local ApusAI = {}
 -- Internal state for tracking requests
 local _requests = {}
 local _requestCounter = 0
+local _networkEnabled = false
 
 -- Generate unique request ID
 local function generateRequestId()
@@ -66,6 +67,52 @@ local function formatResponse(data, session, attestation, reference)
   }
 end
 
+-- Configure process IDs
+function ApusAI.configure(opts)
+  if type(opts) ~= "table" then return end
+  if type(opts.ai_process_id) == "string" then APUS_AI_PROCESS_ID = opts.ai_process_id end
+  if type(opts.token_process_id) == "string" then APUS_TOKEN_PROCESS_ID = opts.token_process_id end
+end
+
+-- Enable/disable network mode
+function ApusAI.enableNetwork(flag)
+  _networkEnabled = not not flag
+end
+
+-- Internal: send inference message to APUS AI process
+local function sendInferenceMessage(prompt, options, reference)
+  local tags = {
+    Action = "Inference-Request",
+    Reference = reference,
+    Session = options.session or generateRequestId(),
+    MaxTokens = tostring(options.max_tokens or DEFAULT_OPTIONS.max_tokens),
+    Temperature = tostring(options.temp or DEFAULT_OPTIONS.temp),
+    TopP = tostring(options.top_p or DEFAULT_OPTIONS.top_p)
+  }
+  local msg = {
+    Target = APUS_AI_PROCESS_ID,
+    Tags = tags,
+    Data = prompt
+  }
+  if ao and ao.send then ao.send(msg) end
+end
+
+-- Optional: pay for an inference task via token process
+function ApusAI.sendPayment(amount, reference)
+  local qty = tostring(amount)
+  local msg = {
+    Target = APUS_TOKEN_PROCESS_ID,
+    Tags = {
+      Action = "Transfer",
+      Recipient = APUS_AI_PROCESS_ID,
+      Quantity = qty,
+      Reference = reference
+    },
+    Data = ""
+  }
+  if ao and ao.send then ao.send(msg) end
+end
+
 --[[
   Main inference function
   @param prompt string - The prompt to send to the AI
@@ -94,6 +141,13 @@ function ApusAI.infer(prompt, options, callback)
     timestamp = os.time()
   }
   
+  -- Network path: send to APUS if enabled and configured
+  if _networkEnabled and APUS_AI_PROCESS_ID ~= "APUS_AI_INFERENCE_PROCESS_ID_PLACEHOLDER" and ao and ao.send then
+    _requests[reference].status = "sent"
+    sendInferenceMessage(prompt, options, reference)
+    return reference
+  end
+
   -- For hackathon MVP: Simulate AI response analyzing $AO price data
   -- In production, this would send actual request to APUS_AI_PROCESS_ID
   local simulateResponse = function()
@@ -278,6 +332,19 @@ function ApusAI.initHandlers()
     return false
   end
   
+  -- Handler for inference acknowledgements (e.g., queued/processing)
+  Handlers.add(
+    "apus-inference-ack",
+    Handlers.utils.hasMatchingTag("Action", "Inference-Ack"),
+    function(msg)
+      local reference = msg.Tags.Reference
+      local request = _requests[reference]
+      if not request then return end
+      local phase = msg.Tags.Phase or "queued"
+      request.status = phase
+    end
+  )
+
   -- Handler for inference responses
   Handlers.add(
     "apus-inference-response",
