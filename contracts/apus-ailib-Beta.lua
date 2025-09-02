@@ -106,10 +106,10 @@ function ApusAI.infer(prompt, options, callback)
     local err = nil
     
     if string.find(prompt:lower(), "market sentiment") or string.find(prompt:lower(), "$ao") then
-      -- Extract price data from prompt
-      local price = tonumber(string.match(prompt, "Price: %$([%d%.]+)")) or 1.0
-      local volume = tonumber(string.match(prompt, "Volume: %$([%d%.]+)")) or 100000
-      local priceChange = tonumber(string.match(prompt, "Change: ([%+%-]?[%d%.]+)%%")) or 0
+      -- Extract price data from prompt (matching actual prompt format)
+      local price = tonumber(string.match(prompt, "Current Price: %$([%d%.]+)")) or 1.0
+      local volume = tonumber(string.match(prompt, "24h Trading Volume: %$([%d%.]+)")) or 100000
+      local priceChange = tonumber(string.match(prompt, "24h Price Change: ([%+%-]?[%d%.]+)%%")) or 0
       
       -- Determine sentiment based on $AO price metrics
       local sentiment
@@ -148,8 +148,14 @@ function ApusAI.infer(prompt, options, callback)
         very_bullish = {"breakout_momentum", "high_volume", "strong_accumulation"}
       }
       
+      -- Create a copy of factors to avoid mutating the original
+      local selectedFactors = {}
+      local baseFactor = factors[sentiment] or factors.neutral
+      for _, factor in ipairs(baseFactor) do
+        table.insert(selectedFactors, factor)
+      end
+      
       -- Add specific factors based on metrics
-      local selectedFactors = factors[sentiment] or factors.neutral
       if volume > 1000000 then
         table.insert(selectedFactors, "high_trading_activity")
       end
@@ -212,10 +218,18 @@ function ApusAI.getInfo(callback)
   end
   
   -- For hackathon MVP: Return simulated info
+  -- Count only pending tasks
+  local pendingCount = 0
+  for _, request in pairs(_requests) do
+    if request.status == "pending" then
+      pendingCount = pendingCount + 1
+    end
+  end
+  
   local info = {
     price = 100, -- Price in Armstrongs
     worker_count = 4,
-    pending_tasks = #_requests,
+    pending_tasks = pendingCount,
     available = true
   }
   
@@ -258,6 +272,12 @@ end
   This would be called when actually connecting to APUS network
 ]]
 function ApusAI.initHandlers()
+  -- Check if Handlers is available (provided by AO runtime)
+  if not Handlers then
+    print("[ApusAI] Warning: Handlers not available, skipping handler initialization")
+    return false
+  end
+  
   -- Handler for inference responses
   Handlers.add(
     "apus-inference-response",
@@ -311,6 +331,9 @@ function ApusAI.initHandlers()
       print("[ApusAI] Payment confirmed: " .. (msg.Tags.Amount or "unknown"))
     end
   )
+  
+  print("[ApusAI] Handlers initialized successfully")
+  return true
 end
 
 -- Export module
