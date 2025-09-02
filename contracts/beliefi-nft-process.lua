@@ -1,5 +1,5 @@
 --[[
-  BeliefFi DeFAI NFT - AO MAXI
+  BelieFi DeFAI NFT - AO MAXI
   Atomic Assets AO Process Implementation
   MVP Version - Public Mint
   
@@ -109,7 +109,7 @@ local METADATA_TEMPLATE = {
   image = "https://arweave.net/belieffi-ao-maxi-image-placeholder", -- TODO: Update with actual image URL
   external_url = "", -- Will be set dynamically
   collection = {
-    name = "BeliefFi DeFAI NFT Collection",
+    name = "BelieFi DeFAI NFT Collection",
     family = "AO MAXI"
   }
 }
@@ -2651,7 +2651,7 @@ local function generateNFTMetadata(nftId, owner, luckyNumber, marketSentiment)
     },
     {
       trait_type = "Collection",
-      value = "BeliefFi DeFAI",
+      value = "BelieFi DeFAI",
       display_type = "string"
     },
     {
@@ -3125,7 +3125,7 @@ local function getNFTInfo(nftId)
     
     -- Atomic Assets standard fields
     collection = {
-      name = "BeliefFi DeFAI NFT Collection",
+      name = "BelieFi DeFAI NFT Collection",
       family = "AO MAXI"
     },
     standard = "Atomic Assets",
@@ -3206,7 +3206,7 @@ end
 
 -- Initialize process metadata
 local function initializeProcess()
-  logInfo("Initializing BeliefFi NFT Process")
+  logInfo("Initializing BelieFi NFT Process")
   logInfo("NFT Name: " .. NFT_NAME)
   logInfo("Max Supply: " .. tostring(MAX_SUPPLY))
   logInfo("Mint Price: " .. MINT_PRICE .. " (1 USDA)")
@@ -3333,7 +3333,7 @@ Handlers.add("Info", Handlers.utils.hasMatchingTag("Action", "Info"), function(m
     Mint_Price = "1 USDA",
     Mint_Status = State.total_minted >= MAX_SUPPLY and "sold_out" or "active",
     Mint_Type = "Public Mint",
-    Contract_Type = "Atomic Asset - BeliefFi NFT"
+    Contract_Type = "Atomic Asset - BelieFi NFT"
   }
   
   logInfo("Info request processed successfully", {current_supply = State.total_minted})
@@ -4335,7 +4335,7 @@ local function testBasicInfo()
     Mint_Price = "1 USDA",
     Mint_Status = State.total_minted >= MAX_SUPPLY and "sold_out" or "active",
     Mint_Type = "Public Mint",
-    Contract_Type = "Atomic Asset - BeliefFi NFT"
+    Contract_Type = "Atomic Asset - BelieFi NFT"
   }
   
   logInfo("Basic Info Test Results", info)
@@ -4593,7 +4593,7 @@ end
 -- ============================================================================
 
 -- Module exports for testing purposes
-BeliefFiNFT = {
+BelieFiNFT = {
   -- Constants
   NFT_NAME = NFT_NAME,
   NFT_SYMBOL = NFT_SYMBOL,
@@ -4717,5 +4717,5 @@ BeliefFiNFT = {
 -- PROCESS READY
 -- ============================================================================
 
-logInfo("BeliefFi NFT Process initialized successfully")
+logInfo("BelieFi NFT Process initialized successfully")
 logInfo("Ready to accept Public Mints")

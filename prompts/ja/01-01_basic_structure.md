@@ -1,4 +1,4 @@
-BeliefFi DeFAI NFT プロジェクトの Atomic Assets AO Process を実装します。
+BelieFi DeFAI NFT プロジェクトの Atomic Assets AO Process を実装します。
 
 要件:
 

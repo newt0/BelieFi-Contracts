@@ -21,7 +21,7 @@ cat > deploy_process.lua << 'EOF'
 print("Loading BelieFi NFT Process with RandAO Integration...")
 
 -- Load the main process
-.load contracts/belieffi-nft-process.lua
+.load contracts/beliefi-nft-process.lua
 
 -- Verify the process loaded correctly
 if State and State.randao_enabled ~= nil then

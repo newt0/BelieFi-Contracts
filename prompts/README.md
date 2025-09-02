@@ -1,8 +1,8 @@
-# BeliefFi Implementation Prompt List (MVP Version)
+# BelieFi Implementation Prompt List (MVP Version)
 
 ## Overview
 
-This directory contains prompts for implementing BeliefFi DeFAI NFT project's Atomic Assets AO Process in phases. This is a simplified MVP implementation for hackathons using Public Mint approach.
+This directory contains prompts for implementing BelieFi DeFAI NFT project's Atomic Assets AO Process in phases. This is a simplified MVP implementation for hackathons using Public Mint approach.
 
 ## Technical Specifications
 
