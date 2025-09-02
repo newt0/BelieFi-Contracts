@@ -31,7 +31,7 @@ local NFT_SYMBOL = "AOMAXI"
 local NFT_DESCRIPTION = "DeFAI NFT Collection - Believe in AO's growth"
 local NFT_STRATEGY = "Maximize $AO"
 local NFT_DENOMINATION = "1"
-local NFT_LOGO = "https://arweave.net/belieffi-logo-placeholder" -- TODO: Update with actual logo URL
+local NFT_LOGO = "https://arweave.net/beliefi-logo-placeholder" -- TODO: Update with actual logo URL
 
 -- Supply Configuration
 local MAX_SUPPLY = 100
@@ -106,7 +106,7 @@ local METADATA_TEMPLATE = {
   name = "", -- Will be set dynamically
   description = "Believing in AO's growth",
   strategy = "Maximize $AO",
-  image = "https://arweave.net/belieffi-ao-maxi-image-placeholder", -- TODO: Update with actual image URL
+  image = "https://arweave.net/beliefi-ao-maxi-image-placeholder", -- TODO: Update with actual image URL
   external_url = "", -- Will be set dynamically
   collection = {
     name = "BelieFi DeFAI NFT Collection",
@@ -2489,7 +2489,7 @@ end
 
 -- Generate external URL for NFT
 local function generateExternalURL(nftId)
-  return "https://belieffi.arweave.net/nft/" .. tostring(nftId)
+  return "https://beliefi.arweave.net/nft/" .. tostring(nftId)
 end
 
 -- Validate metadata structure and content
@@ -3326,7 +3326,7 @@ Handlers.add("Info", Handlers.utils.hasMatchingTag("Action", "Info"), function(m
     Name = NFT_NAME,
     Ticker = NFT_SYMBOL,
     Denomination = "1",
-    Logo = "https://arweave.net/belieffi-logo", -- Fixed logo URL
+    Logo = "https://arweave.net/beliefi-logo", -- Fixed logo URL
     Description = "DeFAI NFT Collection - Believing in AO's growth",
     Total_Supply = tostring(MAX_SUPPLY),
     Current_Supply = tostring(State.total_minted),
