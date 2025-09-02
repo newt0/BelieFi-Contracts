@@ -94,7 +94,7 @@ function ApusAI.infer(prompt, options, callback)
     timestamp = os.time()
   }
   
-  -- For hackathon MVP: Simulate AI response with deterministic output
+  -- For hackathon MVP: Simulate AI response analyzing $AO price data
   -- In production, this would send actual request to APUS_AI_PROCESS_ID
   local simulateResponse = function()
     -- Simulate processing delay
@@ -105,37 +105,63 @@ function ApusAI.infer(prompt, options, callback)
     local response
     local err = nil
     
-    if string.find(prompt:lower(), "market sentiment") or string.find(prompt:lower(), "ao token") then
-      -- Generate market sentiment response
-      local luckyFactor = tonumber(string.match(prompt, "(%d+)")) or 500
-      local sentiment
+    if string.find(prompt:lower(), "market sentiment") or string.find(prompt:lower(), "$ao") then
+      -- Extract price data from prompt
+      local price = tonumber(string.match(prompt, "Price: %$([%d%.]+)")) or 1.0
+      local volume = tonumber(string.match(prompt, "Volume: %$([%d%.]+)")) or 100000
+      local priceChange = tonumber(string.match(prompt, "Change: ([%+%-]?[%d%.]+)%%")) or 0
       
-      if luckyFactor >= 700 then
+      -- Determine sentiment based on $AO price metrics
+      local sentiment
+      local confidence
+      
+      -- Price change is the primary factor
+      if priceChange > 10 then
         sentiment = "very_bullish"
-      elseif luckyFactor >= 400 then
+        confidence = 0.85 + (math.min(priceChange, 30) / 100)
+      elseif priceChange > 3 then
         sentiment = "bullish"
-      elseif luckyFactor >= 200 then
-        sentiment = "neutral"
-      else
+        confidence = 0.70 + (priceChange / 50)
+      elseif priceChange < -10 then
         sentiment = "bearish"
+        confidence = 0.75 + (math.min(math.abs(priceChange), 20) / 100)
+      elseif priceChange < -3 then
+        sentiment = "bearish"
+        confidence = 0.65 + (math.abs(priceChange) / 50)
+      else
+        sentiment = "neutral"
+        confidence = 0.60 + (volume / 10000000) -- Volume adds confidence
       end
       
-      local confidenceBase = 0.6
-      local confidenceVariation = (luckyFactor % 100) / 100 * 0.3
-      local confidence = math.min(0.95, confidenceBase + confidenceVariation)
+      -- Adjust confidence based on volume (higher volume = more confidence)
+      if volume > 1000000 then
+        confidence = math.min(0.95, confidence + 0.1)
+      elseif volume > 500000 then
+        confidence = math.min(0.95, confidence + 0.05)
+      end
       
+      -- Market factors based on price analysis
       local factors = {
-        bearish = {"regulatory_concerns", "market_volatility", "institutional_uncertainty"},
-        neutral = {"market_uncertainty", "mixed_signals", "consolidation_phase"},
-        bullish = {"institutional_adoption", "developer_activity", "ecosystem_expansion"},
-        very_bullish = {"ecosystem_growth", "token_utility", "mass_adoption"}
+        bearish = {"price_downtrend", "low_volume", "selling_pressure"},
+        neutral = {"sideways_movement", "consolidation", "uncertain_direction"},
+        bullish = {"price_uptrend", "strong_volume", "buying_pressure"},
+        very_bullish = {"breakout_momentum", "high_volume", "strong_accumulation"}
       }
+      
+      -- Add specific factors based on metrics
+      local selectedFactors = factors[sentiment] or factors.neutral
+      if volume > 1000000 then
+        table.insert(selectedFactors, "high_trading_activity")
+      end
+      if math.abs(priceChange) > 15 then
+        table.insert(selectedFactors, "significant_price_movement")
+      end
       
       response = formatResponse(
         json.encode({
           ao_sentiment = sentiment,
           confidence_score = confidence,
-          market_factors = factors[sentiment] or factors.neutral
+          market_factors = selectedFactors
         }),
         options.session,
         "gpu-attestation-" .. reference,

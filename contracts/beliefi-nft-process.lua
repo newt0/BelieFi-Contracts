@@ -70,7 +70,7 @@ local APUS_CONFIG = {
   enabled = true,  -- Toggle between AI and hardcoded sentiment
   max_tokens = 200,
   temperature = 0.7,
-  system_prompt = "You are a market sentiment analyzer for AO token. Provide JSON responses with ao_sentiment (bearish/neutral/bullish/very_bullish), confidence_score (0.0-1.0), and market_factors array."
+  system_prompt = "You are a market sentiment analyzer for $AO token. Analyze price trends and market data to determine sentiment. Provide JSON responses with ao_sentiment (bearish/neutral/bullish/very_bullish), confidence_score (0.0-1.0), and market_factors array."
 }
 
 -- Fallback hardcoded sentiment patterns (used when ApusAI is unavailable)
@@ -1676,18 +1676,30 @@ local function getSentimentByLuckyNumber(luckyNumber)
 end
 
 -- Generate hardcoded sentiment (fallback)
-local function generateHardcodedSentiment(luckyNumber)
-  -- Get sentiment type based on lucky number
-  local sentimentType = getSentimentByLuckyNumber(luckyNumber)
-  if not sentimentType then
-    return nil
+local function generateHardcodedSentiment()
+  -- Randomly select a sentiment pattern for fallback
+  -- This simulates market variation when AI is unavailable
+  local sentimentTypes = {"bearish", "neutral", "bullish", "very_bullish"}
+  local weights = {0.2, 0.3, 0.35, 0.15} -- Probability distribution
+  
+  -- Simple weighted random selection
+  local rand = math.random()
+  local cumulative = 0
+  local selectedType = "neutral"
+  
+  for i, weight in ipairs(weights) do
+    cumulative = cumulative + weight
+    if rand <= cumulative then
+      selectedType = sentimentTypes[i]
+      break
+    end
   end
   
   -- Get pattern for this sentiment
-  local pattern = SENTIMENT_PATTERNS[sentimentType]
+  local pattern = SENTIMENT_PATTERNS[selectedType]
   if not pattern then
-    logError("No pattern found for sentiment type", {sentiment_type = sentimentType})
-    return nil
+    logError("No pattern found for sentiment type", {sentiment_type = selectedType})
+    pattern = SENTIMENT_PATTERNS.neutral -- Default to neutral
   end
   
   -- Create market sentiment object
@@ -1696,8 +1708,7 @@ local function generateHardcodedSentiment(luckyNumber)
     confidence_score = pattern.confidence_score,
     analysis_timestamp = getCurrentTimestamp(),
     market_factors = {},
-    sentiment_source = "Fallback (Hardcoded)",
-    lucky_number_basis = luckyNumber
+    sentiment_source = "Fallback (Hardcoded)"
   }
   
   -- Copy market factors (deep copy)
@@ -1709,10 +1720,25 @@ local function generateHardcodedSentiment(luckyNumber)
 end
 
 -- Generate complete market sentiment object with AI or fallback
-local function generateMarketSentiment(luckyNumber)
+local function generateMarketSentiment()
   -- Use hardcoded sentiment if ApusAI is disabled or unavailable
   if not APUS_CONFIG.enabled or not ApusAI then
-    return generateHardcodedSentiment(luckyNumber)
+    return generateHardcodedSentiment()
+  end
+  
+  -- Get current $AO price data from market state
+  local aoPrice = tonumber(State.market_data.ao_price_usda) or 0
+  local volume24h = tonumber(State.market_data.ao_volume_24h) or 0
+  local liquidityDepth = tonumber(State.market_data.liquidity_depth) or 0
+  
+  -- Calculate price change if we have history
+  local priceChange = 0
+  if #State.market_data.price_history >= 2 then
+    local oldPrice = State.market_data.price_history[1].price
+    local currentPrice = State.market_data.price_history[#State.market_data.price_history].price
+    if oldPrice > 0 then
+      priceChange = ((currentPrice - oldPrice) / oldPrice) * 100
+    end
   end
   
   -- For synchronous compatibility, we'll use a simple approach
@@ -1720,14 +1746,21 @@ local function generateMarketSentiment(luckyNumber)
   local sentiment = nil
   local completed = false
   
-  -- Build AI prompt
+  -- Build AI prompt with actual $AO market data
   local prompt = string.format([[
-    Analyze the current AO token market sentiment.
-    Consider the following factors:
-    - Current market conditions and volatility
-    - Trading volume and liquidity trends
-    - Ecosystem development activity
-    - Lucky number influence factor: %d (scale 0-999, higher = more bullish)
+    Analyze the current $AO token market sentiment based on the following data:
+    
+    Current Price: $%f USDA
+    24h Trading Volume: $%f
+    Liquidity Depth: $%f
+    24h Price Change: %+.2f%%
+    
+    Based on this market data, determine the overall sentiment.
+    Consider factors like:
+    - Price momentum and trends
+    - Volume indicators
+    - Market liquidity health
+    - Overall crypto market conditions
     
     Return a JSON object with:
     {
@@ -1735,13 +1768,13 @@ local function generateMarketSentiment(luckyNumber)
       "confidence_score": 0.0 to 1.0,
       "market_factors": ["factor1", "factor2", "factor3"]
     }
-  ]], luckyNumber)
+  ]], aoPrice, volume24h, liquidityDepth, priceChange)
   
   -- Request AI sentiment analysis
   ApusAI.infer(prompt, APUS_CONFIG, function(err, res)
     if err then
       logError("ApusAI inference failed, using fallback", {error = err.message})
-      sentiment = generateHardcodedSentiment(luckyNumber)
+      sentiment = generateHardcodedSentiment()
     else
       -- Parse AI response
       local success, parsed = pcall(json.decode, res.data)
@@ -1752,11 +1785,12 @@ local function generateMarketSentiment(luckyNumber)
           analysis_timestamp = getCurrentTimestamp(),
           market_factors = parsed.market_factors or {},
           sentiment_source = "Powered by Apus Network AI",
-          lucky_number_basis = luckyNumber
+          ao_price_analyzed = aoPrice,
+          volume_analyzed = volume24h
         }
       else
         logError("Failed to parse AI response, using fallback")
-        sentiment = generateHardcodedSentiment(luckyNumber)
+        sentiment = generateHardcodedSentiment()
       end
     end
     completed = true
@@ -1764,7 +1798,7 @@ local function generateMarketSentiment(luckyNumber)
   
   -- For MVP, return the sentiment (either AI or fallback)
   -- In production, this would be handled asynchronously
-  return sentiment or generateHardcodedSentiment(luckyNumber)
+  return sentiment or generateHardcodedSentiment()
 end
 
 -- Format sentiment data for display/API
@@ -1867,19 +1901,19 @@ end
 
 -- Generate sentiment and lucky number combination for minting
 local function generateNFTData(nftId)
-  -- Generate lucky number
+  -- Generate lucky number (independent)
   local luckyNumber = getNextLuckyNumber()
   if not luckyNumber then
     return nil, "No lucky number available"
   end
   
-  -- Generate market sentiment based on lucky number
-  local marketSentiment = generateMarketSentiment(luckyNumber)
+  -- Generate market sentiment (independent, based on $AO price)
+  local marketSentiment = generateMarketSentiment()
   if not marketSentiment then
     return nil, "Failed to generate market sentiment"
   end
   
-  -- Return combined data
+  -- Return combined data (both are independent NFT metadata)
   return {
     nft_id = nftId,
     lucky_number = luckyNumber,
