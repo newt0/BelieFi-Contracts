@@ -4467,10 +4467,10 @@ local function testMintFlow(testAddress)
   end
   logInfo("Lucky number generated", {lucky_number = luckyNumber})
   
-  -- Test market sentiment
-  local sentiment = generateMarketSentiment(luckyNumber)
+  -- Test market sentiment (independent from lucky number)
+  local sentiment = generateMarketSentiment()
   if not sentiment then
-    logError("Market sentiment generation failed", {lucky_number = luckyNumber})
+    logError("Market sentiment generation failed")
     return false, "Market sentiment generation failed"
   end
   logInfo("Market sentiment generated", sentiment)
