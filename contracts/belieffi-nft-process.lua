@@ -183,6 +183,82 @@ State.process_owner = State.process_owner or ao.id
 State.created_at = State.created_at or os.time()
 
 -- ============================================================================
+-- DEFAI AGENT STATE & CONFIGURATION
+-- ============================================================================
+
+-- DeFAI Agent Process IDs and Configuration
+local BOTEGA_PROCESS_ID = "U3Yy3MQ41urYMvSmzHsaA4hJEDuvIm-TgXvSm-wz-X0" -- Botega AMM Process
+local DEXI_PROCESS_ID = "POJ5oyOzEnQf3Gm7yxVFOmWV5I-LfpAxIw_dYH1Kl-Y" -- Dexi Data Agent
+local AO_PROCESS_ID = "Sa0iBLPNyJQrwpTTG-tWLQU-1QeUAJA73DdxGGiKoJc" -- AO Token Process
+
+-- Agent Configuration
+State.agent_config = State.agent_config or {
+  enabled = true,
+  dca_enabled = true,
+  smart_swap_enabled = true,
+  sentiment_response_enabled = true,
+  daily_budget_percentage = 0.1, -- 10% of available funds for DCA
+  dca_slippage = 5.0, -- 5% slippage tolerance
+  smart_swap_threshold_multiplier = 0.95, -- Buy when price drops 5%
+  rebalance_threshold = 0.1, -- 10% deviation triggers rebalance
+  target_usda_ratio = 0.1, -- Hold 10% USDA
+  target_ao_ratio = 0.9, -- Hold 90% AO
+  max_single_swap_percentage = 0.5, -- Max 50% of balance in single swap
+  performance_tracking_enabled = true
+}
+
+-- Agent State Variables
+State.agent_enabled = State.agent_enabled or true
+State.last_dca_execution = State.last_dca_execution or 0
+State.last_market_data_update = State.last_market_data_update or 0
+State.last_performance_tracking = State.last_performance_tracking or 0
+
+-- Market Data Storage
+State.market_data = State.market_data or {
+  ao_price_usda = "0",
+  ao_volume_24h = "0",
+  liquidity_depth = "0",
+  last_updated = 0,
+  price_history = {} -- Store last 24 hourly prices for trend analysis
+}
+
+-- Agent Portfolio State
+State.agent_portfolio = State.agent_portfolio or {
+  total_usda_invested = "0", -- Total USDA invested via agent
+  total_ao_accumulated = "0", -- Total AO accumulated
+  average_purchase_price = "0", -- Average AO purchase price
+  total_transactions = 0,
+  dca_transactions = 0,
+  smart_swap_transactions = 0,
+  performance_start_date = 0
+}
+
+-- Transaction History for Agent Operations
+State.agent_transactions = State.agent_transactions or {} -- Array of transaction records
+
+-- Smart Swap Configuration per NFT (based on lucky numbers)
+State.smart_swap_thresholds = State.smart_swap_thresholds or {} -- nft_id -> threshold_price
+
+-- Dexi Subscription State
+State.dexi_subscription = State.dexi_subscription or {
+  subscribed = false,
+  subscription_id = nil,
+  last_payment = 0,
+  balance = "0" -- AOCRED balance for Dexi services
+}
+
+-- Agent Performance Metrics
+State.agent_performance = State.agent_performance or {
+  total_roi = 0, -- Return on Investment
+  best_trade_roi = 0,
+  worst_trade_roi = 0,
+  win_rate = 0, -- Percentage of profitable trades
+  total_fees_paid = "0",
+  days_active = 0,
+  last_performance_calculation = 0
+}
+
+-- ============================================================================
 -- HELPER FUNCTIONS
 -- ============================================================================
 
@@ -670,6 +746,743 @@ local function checkSupplyLimits()
   }
   
   return limits
+end
+
+-- ============================================================================
+-- DEFAI AGENT DCA FUNCTIONS
+-- ============================================================================
+
+-- Calculate daily DCA budget from available funds
+local function getDailyDCABudget()
+  local currentBalance = tonumber(State.process_balance) or 0
+  local dailyBudget = currentBalance * State.agent_config.daily_budget_percentage
+  
+  -- Minimum budget check (at least 0.1 USDA for meaningful transactions)
+  if dailyBudget < 0.1 then
+    return 0, "Insufficient balance for DCA"
+  end
+  
+  return dailyBudget, nil
+end
+
+-- Get current AO price from market data
+local function getCurrentAOPrice()
+  local price = tonumber(State.market_data.ao_price_usda) or 0
+  if price <= 0 then
+    return nil, "No valid price data available"
+  end
+  return price, nil
+end
+
+-- Execute DCA swap on Botega
+local function executeDCASwap(usdaAmount)
+  -- Validate amount
+  if not usdaAmount or usdaAmount <= 0 then
+    logError("Invalid USDA amount for DCA", {amount = usdaAmount})
+    return false, "Invalid amount"
+  end
+  
+  -- Check if we have sufficient balance
+  local currentBalance = tonumber(State.process_balance) or 0
+  if currentBalance < usdaAmount then
+    logError("Insufficient balance for DCA swap", {
+      required = usdaAmount,
+      available = currentBalance
+    })
+    return false, "Insufficient balance"
+  end
+  
+  -- Get current price for estimation
+  local currentPrice, priceError = getCurrentAOPrice()
+  if not currentPrice then
+    logInfo("DCA executed without price data: " .. (priceError or "unknown error"))
+  end
+  
+  -- Send swap message to Botega
+  local swapSuccess, swapError = pcall(function()
+    ao.send({
+      Target = BOTEGA_PROCESS_ID,
+      Action = "Swap",
+      ["From-Token"] = USDA_PROCESS_ID,
+      ["To-Token"] = AO_PROCESS_ID,
+      ["From-Amount"] = tostring(math.floor(usdaAmount * 1000000000000)), -- Convert to 12 decimals
+      ["Slippage"] = tostring(State.agent_config.dca_slippage),
+      ["Agent-Type"] = "DCA",
+      ["Agent-Process"] = ao.id
+    })
+  end)
+  
+  if not swapSuccess then
+    logError("Failed to send DCA swap message", {error = swapError})
+    return false, "Swap message failed"
+  end
+  
+  -- Update balance (optimistically)
+  State.process_balance = tostring(currentBalance - usdaAmount)
+  
+  -- Record DCA transaction
+  local transaction = {
+    type = "DCA",
+    usda_amount = tostring(usdaAmount),
+    ao_price = currentPrice and tostring(currentPrice) or "unknown",
+    timestamp = getCurrentTimestamp(),
+    status = "pending",
+    botega_tx_id = nil -- Will be updated when we get confirmation
+  }
+  
+  table.insert(State.agent_transactions, transaction)
+  State.agent_portfolio.dca_transactions = State.agent_portfolio.dca_transactions + 1
+  State.agent_portfolio.total_transactions = State.agent_portfolio.total_transactions + 1
+  
+  -- Update portfolio tracking
+  local currentInvested = tonumber(State.agent_portfolio.total_usda_invested) or 0
+  State.agent_portfolio.total_usda_invested = tostring(currentInvested + usdaAmount)
+  
+  logInfo("DCA swap executed", {
+    usda_amount = usdaAmount,
+    current_price = currentPrice,
+    slippage = State.agent_config.dca_slippage
+  })
+  
+  return true, "DCA swap sent to Botega"
+end
+
+-- Check if DCA should be executed (daily check)
+local function shouldExecuteDCA()
+  if not State.agent_config.dca_enabled or not State.agent_enabled then
+    return false, "DCA disabled"
+  end
+  
+  local currentTime = os.time()
+  local lastExecution = State.last_dca_execution or 0
+  local timeSinceLastDCA = currentTime - lastExecution
+  
+  -- Execute DCA once per day (86400 seconds)
+  if timeSinceLastDCA < 86400 then
+    return false, "DCA already executed today"
+  end
+  
+  return true, "DCA ready for execution"
+end
+
+-- Main DCA execution function (called by cron)
+local function executeDailyDCA()
+  logInfo("Starting daily DCA execution")
+  
+  -- Check if DCA should be executed
+  local shouldExecute, reason = shouldExecuteDCA()
+  if not shouldExecute then
+    logInfo("Skipping DCA: " .. reason)
+    return {
+      status = "skipped",
+      reason = reason
+    }
+  end
+  
+  -- Calculate daily budget
+  local dailyBudget, budgetError = getDailyDCABudget()
+  if not dailyBudget or dailyBudget <= 0 then
+    logError("Cannot execute DCA", {error = budgetError})
+    return {
+      status = "error",
+      error = budgetError or "No budget available"
+    }
+  end
+  
+  -- Execute the swap
+  local swapSuccess, swapError = executeDCASwap(dailyBudget)
+  if not swapSuccess then
+    logError("DCA swap failed", {error = swapError})
+    return {
+      status = "error",
+      error = swapError
+    }
+  end
+  
+  -- Update last execution time
+  State.last_dca_execution = os.time()
+  
+  logInfo("Daily DCA execution completed", {
+    amount = dailyBudget,
+    timestamp = getCurrentTimestamp()
+  })
+  
+  return {
+    status = "success",
+    usda_amount = dailyBudget,
+    timestamp = getCurrentTimestamp()
+  }
+end
+
+-- Calculate average purchase price for AO
+local function updateAveragePurchasePrice(newAOAmount, newPrice)
+  local currentTotal = tonumber(State.agent_portfolio.total_ao_accumulated) or 0
+  local currentAvg = tonumber(State.agent_portfolio.average_purchase_price) or 0
+  
+  if currentTotal > 0 then
+    -- Weighted average calculation
+    local totalValue = (currentTotal * currentAvg) + (newAOAmount * newPrice)
+    local newTotal = currentTotal + newAOAmount
+    State.agent_portfolio.average_purchase_price = tostring(totalValue / newTotal)
+  else
+    -- First purchase
+    State.agent_portfolio.average_purchase_price = tostring(newPrice)
+  end
+  
+  -- Update total accumulated
+  State.agent_portfolio.total_ao_accumulated = tostring(currentTotal + newAOAmount)
+end
+
+-- Handle DCA swap confirmation from Botega
+local function handleDCASwapConfirmation(txId, usdaAmount, aoReceived, actualPrice)
+  logInfo("Processing DCA swap confirmation", {
+    tx_id = txId,
+    usda_amount = usdaAmount,
+    ao_received = aoReceived,
+    actual_price = actualPrice
+  })
+  
+  -- Find the pending transaction
+  for i, tx in ipairs(State.agent_transactions) do
+    if tx.type == "DCA" and tx.status == "pending" and 
+       tonumber(tx.usda_amount) == tonumber(usdaAmount) then
+      
+      -- Update transaction record
+      tx.status = "completed"
+      tx.botega_tx_id = txId
+      tx.ao_received = tostring(aoReceived)
+      tx.actual_price = tostring(actualPrice)
+      tx.completed_at = getCurrentTimestamp()
+      
+      -- Update portfolio metrics
+      updateAveragePurchasePrice(aoReceived, actualPrice)
+      
+      logInfo("DCA transaction confirmed", {
+        tx_id = txId,
+        ao_received = aoReceived
+      })
+      
+      return true
+    end
+  end
+  
+  logError("No matching pending DCA transaction found", {tx_id = txId})
+  return false
+end
+
+-- Get DCA statistics and performance
+local function getDCAStats()
+  local stats = {
+    dca_enabled = State.agent_config.dca_enabled,
+    total_dca_transactions = State.agent_portfolio.dca_transactions,
+    total_usda_invested = State.agent_portfolio.total_usda_invested,
+    total_ao_accumulated = State.agent_portfolio.total_ao_accumulated,
+    average_purchase_price = State.agent_portfolio.average_purchase_price,
+    last_dca_execution = State.last_dca_execution,
+    daily_budget_percentage = State.agent_config.daily_budget_percentage,
+    current_daily_budget = 0
+  }
+  
+  -- Calculate current daily budget
+  local budget, _ = getDailyDCABudget()
+  stats.current_daily_budget = budget or 0
+  
+  -- Calculate time until next DCA
+  if State.last_dca_execution > 0 then
+    local timeSinceLastDCA = os.time() - State.last_dca_execution
+    stats.time_until_next_dca = math.max(0, 86400 - timeSinceLastDCA)
+  else
+    stats.time_until_next_dca = 0
+  end
+  
+  return stats
+end
+
+-- ============================================================================
+-- DEFAI AGENT DEXI DATA STREAM INTEGRATION
+-- ============================================================================
+
+-- Subscribe to Dexi data stream
+local function subscribeToDexi()
+  if State.dexi_subscription.subscribed then
+    logInfo("Already subscribed to Dexi data stream")
+    return true, "Already subscribed"
+  end
+  
+  -- Send registration message to Dexi
+  local success, error = pcall(function()
+    ao.send({
+      Target = DEXI_PROCESS_ID,
+      Action = "Register-Process",
+      ["AMM-Process-Id"] = BOTEGA_PROCESS_ID,
+      ["Subscriber-Process-Id"] = ao.id,
+      ["Owner-Id"] = State.process_owner
+    })
+  end)
+  
+  if not success then
+    logError("Failed to send Dexi subscription message", {error = error})
+    return false, "Subscription message failed"
+  end
+  
+  State.dexi_subscription.subscribed = true
+  State.dexi_subscription.last_payment = os.time()
+  
+  logInfo("Dexi subscription request sent")
+  return true, "Subscription request sent"
+end
+
+-- Process market data update from Dexi
+local function processMarketDataUpdate(data)
+  if not data then
+    logError("No market data received from Dexi")
+    return false
+  end
+  
+  -- Update market data
+  if data.ao_price then
+    State.market_data.ao_price_usda = tostring(data.ao_price)
+  end
+  
+  if data.volume_24h then
+    State.market_data.ao_volume_24h = tostring(data.volume_24h)
+  end
+  
+  if data.liquidity_depth then
+    State.market_data.liquidity_depth = tostring(data.liquidity_depth)
+  end
+  
+  State.market_data.last_updated = os.time()
+  State.last_market_data_update = os.time()
+  
+  -- Store price in history (keep last 24 hours)
+  local price = tonumber(State.market_data.ao_price_usda) or 0
+  if price > 0 then
+    table.insert(State.market_data.price_history, {
+      price = price,
+      timestamp = os.time()
+    })
+    
+    -- Keep only last 24 entries (hourly updates)
+    while #State.market_data.price_history > 24 do
+      table.remove(State.market_data.price_history, 1)
+    end
+  end
+  
+  logInfo("Market data updated from Dexi", {
+    price = State.market_data.ao_price_usda,
+    volume = State.market_data.ao_volume_24h,
+    liquidity = State.market_data.liquidity_depth
+  })
+  
+  return true
+end
+
+-- Calculate price trend from history
+local function calculatePriceTrend()
+  local history = State.market_data.price_history
+  if #history < 2 then
+    return 0, "insufficient_data"
+  end
+  
+  local oldPrice = history[1].price
+  local currentPrice = history[#history].price
+  
+  if oldPrice == 0 then
+    return 0, "invalid_old_price"
+  end
+  
+  local trendPercentage = ((currentPrice - oldPrice) / oldPrice) * 100
+  return trendPercentage, nil
+end
+
+-- Get market sentiment based on price trend and volume
+local function calculateMarketSentiment()
+  local trend, trendError = calculatePriceTrend()
+  if trendError then
+    return "neutral", 0.5, trendError
+  end
+  
+  local volume = tonumber(State.market_data.ao_volume_24h) or 0
+  
+  -- Simple sentiment calculation based on price trend and volume
+  local sentiment = "neutral"
+  local confidence = 0.5
+  
+  if trend > 5 and volume > 1000 then
+    sentiment = "very_bullish"
+    confidence = 0.9
+  elseif trend > 2 then
+    sentiment = "bullish"
+    confidence = 0.7
+  elseif trend < -5 and volume > 1000 then
+    sentiment = "bearish"
+    confidence = 0.8
+  elseif trend < -2 then
+    sentiment = "bearish"
+    confidence = 0.6
+  end
+  
+  return sentiment, confidence, nil
+end
+
+-- Check if market data is stale
+local function isMarketDataStale()
+  local currentTime = os.time()
+  local lastUpdate = State.market_data.last_updated or 0
+  
+  -- Data is stale if older than 2 hours
+  return (currentTime - lastUpdate) > 7200
+end
+
+-- Request fresh market data from Dexi
+local function requestMarketDataUpdate()
+  if not State.dexi_subscription.subscribed then
+    logInfo("Not subscribed to Dexi, attempting subscription")
+    subscribeToDexi()
+    return false, "Not subscribed"
+  end
+  
+  local success, error = pcall(function()
+    ao.send({
+      Target = DEXI_PROCESS_ID,
+      Action = "Request-Market-Data",
+      ["Token"] = "AO",
+      ["Quote"] = "USDA",
+      ["Requester"] = ao.id
+    })
+  end)
+  
+  if not success then
+    logError("Failed to request market data update", {error = error})
+    return false, "Request failed"
+  end
+  
+  logInfo("Market data update requested from Dexi")
+  return true, "Update requested"
+end
+
+-- Get current market data summary
+local function getMarketDataSummary()
+  local isStale = isMarketDataStale()
+  local trend, trendError = calculatePriceTrend()
+  local sentiment, confidence, sentimentError = calculateMarketSentiment()
+  
+  return {
+    ao_price_usda = State.market_data.ao_price_usda,
+    ao_volume_24h = State.market_data.ao_volume_24h,
+    liquidity_depth = State.market_data.liquidity_depth,
+    last_updated = State.market_data.last_updated,
+    data_age_seconds = os.time() - (State.market_data.last_updated or 0),
+    is_stale = isStale,
+    price_trend_percentage = trendError and 0 or trend,
+    calculated_sentiment = sentiment,
+    sentiment_confidence = confidence,
+    price_history_count = #State.market_data.price_history,
+    dexi_subscription_active = State.dexi_subscription.subscribed
+  }
+end
+
+-- Initialize market data monitoring
+local function initializeMarketDataMonitoring()
+  logInfo("Initializing market data monitoring")
+  
+  -- Subscribe to Dexi if not already subscribed
+  if not State.dexi_subscription.subscribed then
+    local success, message = subscribeToDexi()
+    if not success then
+      logError("Failed to subscribe to Dexi during initialization", {error = message})
+    end
+  end
+  
+  -- Request initial data update
+  if State.market_data.last_updated == 0 or isMarketDataStale() then
+    requestMarketDataUpdate()
+  end
+  
+  return true
+end
+
+-- ============================================================================
+-- DEFAI AGENT TRIGGER-BASED ACTIONS
+-- ============================================================================
+
+-- Calculate buy threshold based on lucky number
+local function calculateBuyThreshold(luckyNumber)
+  if not luckyNumber or luckyNumber < 0 or luckyNumber > 999 then
+    logError("Invalid lucky number for threshold calculation", {lucky_number = luckyNumber})
+    return nil
+  end
+  
+  local currentPrice = tonumber(State.market_data.ao_price_usda) or 0
+  if currentPrice <= 0 then
+    logError("Invalid current price for threshold calculation", {price = currentPrice})
+    return nil
+  end
+  
+  -- Create threshold based on lucky number:
+  -- Higher lucky numbers = more aggressive buying (lower threshold)
+  -- Lower lucky numbers = more conservative buying (higher threshold)
+  local aggressiveness = luckyNumber / 1000 -- 0 to 0.999
+  local baseMultiplier = State.agent_config.smart_swap_threshold_multiplier -- 0.95 (5% drop)
+  
+  -- Adjust multiplier based on lucky number
+  -- Lucky numbers 700-999 = more aggressive (bigger discounts needed)
+  -- Lucky numbers 400-699 = moderate
+  -- Lucky numbers 0-399 = more conservative (smaller discounts)
+  local adjustedMultiplier = baseMultiplier - (aggressiveness * 0.1) -- 0.85 to 0.95
+  
+  local threshold = currentPrice * adjustedMultiplier
+  
+  logInfo("Calculated buy threshold", {
+    lucky_number = luckyNumber,
+    current_price = currentPrice,
+    threshold = threshold,
+    discount_percentage = (1 - adjustedMultiplier) * 100
+  })
+  
+  return threshold
+end
+
+-- Check if smart swap conditions are met
+local function checkSmartSwapConditions()
+  if not State.agent_config.smart_swap_enabled or not State.agent_enabled then
+    return false, "Smart swap disabled"
+  end
+  
+  local currentPrice = tonumber(State.market_data.ao_price_usda) or 0
+  if currentPrice <= 0 then
+    return false, "No valid price data"
+  end
+  
+  -- Check available balance
+  local availableBalance = tonumber(State.process_balance) or 0
+  local minSwapAmount = availableBalance * 0.1 -- At least 10% of balance for meaningful swap
+  
+  if minSwapAmount < 1 then -- Less than 1 USDA
+    return false, "Insufficient balance for smart swap"
+  end
+  
+  -- Check all NFT thresholds to see if any are triggered
+  local triggeredNFTs = {}
+  
+  for nftId, _ in pairs(State.nft_owners) do
+    local luckyNumber = State.lucky_numbers_assigned[nftId]
+    if luckyNumber then
+      local threshold = calculateBuyThreshold(luckyNumber)
+      if threshold and currentPrice < threshold then
+        table.insert(triggeredNFTs, {
+          nft_id = nftId,
+          lucky_number = luckyNumber,
+          threshold = threshold,
+          discount_percentage = ((threshold - currentPrice) / threshold) * 100
+        })
+      end
+    end
+  end
+  
+  if #triggeredNFTs == 0 then
+    return false, "No thresholds triggered"
+  end
+  
+  return true, triggeredNFTs
+end
+
+-- Execute smart swap based on triggered conditions
+local function executeSmartSwap(triggeredNFTs, reason)
+  logInfo("Executing smart swap", {
+    triggered_nfts_count = #triggeredNFTs,
+    reason = reason
+  })
+  
+  local availableBalance = tonumber(State.process_balance) or 0
+  local swapAmount = availableBalance * State.agent_config.max_single_swap_percentage
+  
+  -- Don't swap if amount is too small
+  if swapAmount < 1 then
+    logError("Smart swap amount too small", {amount = swapAmount})
+    return false, "Amount too small"
+  end
+  
+  -- Choose the NFT with highest discount for swap reasoning
+  local bestDiscount = 0
+  local bestNFT = nil
+  for _, nft in ipairs(triggeredNFTs) do
+    if nft.discount_percentage > bestDiscount then
+      bestDiscount = nft.discount_percentage
+      bestNFT = nft
+    end
+  end
+  
+  -- Execute the swap
+  local swapSuccess, swapError = pcall(function()
+    ao.send({
+      Target = BOTEGA_PROCESS_ID,
+      Action = "Swap",
+      ["From-Token"] = USDA_PROCESS_ID,
+      ["To-Token"] = AO_PROCESS_ID,
+      ["From-Amount"] = tostring(math.floor(swapAmount * 1000000000000)), -- Convert to 12 decimals
+      ["Slippage"] = tostring(State.agent_config.dca_slippage),
+      ["Agent-Type"] = "Smart-Swap",
+      ["Agent-Process"] = ao.id,
+      ["Trigger-Reason"] = reason,
+      ["Best-NFT-ID"] = bestNFT and tostring(bestNFT.nft_id) or "unknown",
+      ["Discount-Percentage"] = bestNFT and tostring(bestNFT.discount_percentage) or "unknown"
+    })
+  end)
+  
+  if not swapSuccess then
+    logError("Failed to send smart swap message", {error = swapError})
+    return false, "Smart swap message failed"
+  end
+  
+  -- Update balance optimistically
+  State.process_balance = tostring(availableBalance - swapAmount)
+  
+  -- Record smart swap transaction
+  local transaction = {
+    type = "Smart-Swap",
+    usda_amount = tostring(swapAmount),
+    ao_price = State.market_data.ao_price_usda,
+    timestamp = getCurrentTimestamp(),
+    status = "pending",
+    trigger_reason = reason,
+    triggered_nfts_count = #triggeredNFTs,
+    best_nft_id = bestNFT and bestNFT.nft_id or nil,
+    discount_percentage = bestNFT and bestNFT.discount_percentage or 0,
+    botega_tx_id = nil
+  }
+  
+  table.insert(State.agent_transactions, transaction)
+  State.agent_portfolio.smart_swap_transactions = State.agent_portfolio.smart_swap_transactions + 1
+  State.agent_portfolio.total_transactions = State.agent_portfolio.total_transactions + 1
+  
+  logInfo("Smart swap executed", {
+    usda_amount = swapAmount,
+    discount_percentage = bestDiscount,
+    triggered_nfts = #triggeredNFTs
+  })
+  
+  return true, "Smart swap executed"
+end
+
+-- Check and respond to market sentiment
+local function checkSentimentBasedAction()
+  if not State.agent_config.sentiment_response_enabled or not State.agent_enabled then
+    return false, "Sentiment response disabled"
+  end
+  
+  local sentiment, confidence, error = calculateMarketSentiment()
+  if error then
+    return false, "Cannot calculate sentiment: " .. error
+  end
+  
+  -- Only act on high-confidence very bullish signals
+  if sentiment == "very_bullish" and confidence > 0.9 then
+    local availableBalance = tonumber(State.process_balance) or 0
+    local boostAmount = availableBalance * 0.25 -- 25% of balance for sentiment boost
+    
+    if boostAmount >= 1 then -- At least 1 USDA
+      return executeSentimentBoostPurchase(boostAmount, sentiment, confidence)
+    end
+  end
+  
+  return false, "No sentiment action needed"
+end
+
+-- Execute sentiment boost purchase
+local function executeSentimentBoostPurchase(amount, sentiment, confidence)
+  logInfo("Executing sentiment boost purchase", {
+    amount = amount,
+    sentiment = sentiment,
+    confidence = confidence
+  })
+  
+  local success, error = pcall(function()
+    ao.send({
+      Target = BOTEGA_PROCESS_ID,
+      Action = "Swap",
+      ["From-Token"] = USDA_PROCESS_ID,
+      ["To-Token"] = AO_PROCESS_ID,
+      ["From-Amount"] = tostring(math.floor(amount * 1000000000000)), -- Convert to 12 decimals
+      ["Slippage"] = tostring(State.agent_config.dca_slippage),
+      ["Agent-Type"] = "Sentiment-Boost",
+      ["Agent-Process"] = ao.id,
+      ["Market-Sentiment"] = sentiment,
+      ["Confidence-Score"] = tostring(confidence)
+    })
+  end)
+  
+  if not success then
+    logError("Failed to send sentiment boost purchase", {error = error})
+    return false, "Sentiment boost failed"
+  end
+  
+  -- Update balance and record transaction
+  local currentBalance = tonumber(State.process_balance) or 0
+  State.process_balance = tostring(currentBalance - amount)
+  
+  local transaction = {
+    type = "Sentiment-Boost",
+    usda_amount = tostring(amount),
+    ao_price = State.market_data.ao_price_usda,
+    timestamp = getCurrentTimestamp(),
+    status = "pending",
+    market_sentiment = sentiment,
+    confidence_score = confidence,
+    botega_tx_id = nil
+  }
+  
+  table.insert(State.agent_transactions, transaction)
+  State.agent_portfolio.total_transactions = State.agent_portfolio.total_transactions + 1
+  
+  return true, "Sentiment boost purchase executed"
+end
+
+-- Main trigger checking function (called periodically)
+local function checkAllTriggers()
+  local actions = {
+    smart_swap = false,
+    sentiment_boost = false
+  }
+  
+  -- Check smart swap conditions
+  local smartSwapReady, smartSwapData = checkSmartSwapConditions()
+  if smartSwapReady and type(smartSwapData) == "table" then
+    local swapSuccess, swapMessage = executeSmartSwap(smartSwapData, "Price threshold triggered")
+    actions.smart_swap = swapSuccess
+    if swapSuccess then
+      logInfo("Smart swap triggered and executed")
+    end
+  end
+  
+  -- Check sentiment-based actions
+  local sentimentAction, sentimentMessage = checkSentimentBasedAction()
+  actions.sentiment_boost = sentimentAction
+  if sentimentAction then
+    logInfo("Sentiment-based action executed")
+  end
+  
+  return actions
+end
+
+-- Get trigger status and configuration
+local function getTriggerStatus()
+  local currentPrice = tonumber(State.market_data.ao_price_usda) or 0
+  local smartSwapReady, smartSwapData = checkSmartSwapConditions()
+  local sentiment, confidence, _ = calculateMarketSentiment()
+  
+  return {
+    smart_swap_enabled = State.agent_config.smart_swap_enabled,
+    sentiment_response_enabled = State.agent_config.sentiment_response_enabled,
+    current_ao_price = currentPrice,
+    smart_swap_ready = smartSwapReady,
+    triggered_nfts_count = smartSwapReady and type(smartSwapData) == "table" and #smartSwapData or 0,
+    current_sentiment = sentiment,
+    sentiment_confidence = confidence,
+    available_balance = State.process_balance,
+    last_trigger_check = os.time()
+  }
 end
 
 -- ============================================================================
@@ -2413,6 +3226,26 @@ local function initializeProcess()
     return false
   end
   
+  -- Initialize DeFAI Agent Systems
+  logInfo("Initializing DeFAI Agent Systems")
+  logInfo("Agent Enabled: " .. tostring(State.agent_enabled))
+  
+  if State.agent_enabled then
+    -- Initialize market data monitoring
+    local marketInit = initializeMarketDataMonitoring()
+    if not marketInit then
+      logError("Failed to initialize market data monitoring")
+      -- Don't fail completely, just disable agent
+      State.agent_enabled = false
+      logInfo("Agent disabled due to initialization failure")
+    else
+      logInfo("DeFAI Agent initialized successfully")
+      logInfo("DCA Enabled: " .. tostring(State.agent_config.dca_enabled))
+      logInfo("Smart Swap Enabled: " .. tostring(State.agent_config.smart_swap_enabled))
+      logInfo("Sentiment Response Enabled: " .. tostring(State.agent_config.sentiment_response_enabled))
+    end
+  end
+  
   -- Set initial process tags
   ao.id = ao.id or "PROCESS_ID_PLACEHOLDER"
   
@@ -3013,6 +3846,274 @@ Handlers.add("Get-Pending-Mints", Handlers.utils.hasMatchingTag("Action", "Get-P
       timeout_threshold = State.randao_fallback_timeout
     })
   })
+end)
+
+-- ============================================================================
+-- DEFAI AGENT MESSAGE HANDLERS
+-- ============================================================================
+
+-- Cron Handler: Execute scheduled agent actions
+Handlers.add("Cron", Handlers.utils.hasMatchingTag("Action", "Cron"), function(msg)
+  logInfo("Processing Cron message")
+  
+  if not State.agent_enabled then
+    logInfo("Agent disabled, skipping cron actions")
+    return
+  end
+  
+  local actions = {
+    dca_executed = false,
+    market_data_updated = false,
+    triggers_checked = false
+  }
+  
+  local currentTime = os.time()
+  
+  -- Execute DCA (daily)
+  local dcaResult = executeDailyDCA()
+  actions.dca_executed = (dcaResult.status == "success")
+  
+  -- Update market data (hourly)
+  local timeSinceMarketUpdate = currentTime - (State.last_market_data_update or 0)
+  if timeSinceMarketUpdate > 3600 or isMarketDataStale() then -- 1 hour
+    requestMarketDataUpdate()
+    actions.market_data_updated = true
+    State.last_market_data_update = currentTime
+  end
+  
+  -- Check triggers (every 30 minutes)
+  local triggerActions = checkAllTriggers()
+  actions.triggers_checked = true
+  actions.smart_swap_executed = triggerActions.smart_swap
+  actions.sentiment_boost_executed = triggerActions.sentiment_boost
+  
+  -- Update performance tracking (daily)
+  local timeSincePerformanceUpdate = currentTime - (State.last_performance_tracking or 0)
+  if timeSincePerformanceUpdate > 86400 then -- 24 hours
+    -- Simple performance tracking
+    State.agent_performance.days_active = State.agent_performance.days_active + 1
+    State.last_performance_tracking = currentTime
+    actions.performance_updated = true
+  end
+  
+  logInfo("Cron actions completed", actions)
+  
+  -- Send response (optional)
+  ao.send({
+    Target = msg.From,
+    Action = "Cron-Response",
+    Data = json.encode({
+      status = "success",
+      actions = actions,
+      timestamp = getCurrentTimestamp()
+    })
+  })
+end)
+
+-- Market Data Update Handler: Process data from Dexi
+Handlers.add("Market-Data-Update", Handlers.utils.hasMatchingTag("Action", "Market-Data-Update"), function(msg)
+  logInfo("Processing market data update from Dexi")
+  
+  local success, error = pcall(function()
+    local data = json.decode(msg.Data)
+    processMarketDataUpdate(data)
+  end)
+  
+  if not success then
+    logError("Failed to process market data update", {error = error})
+    return
+  end
+  
+  logInfo("Market data successfully updated from Dexi")
+  
+  -- Check triggers after market data update
+  if State.agent_enabled then
+    checkAllTriggers()
+  end
+end)
+
+-- Agent Status Handler: Get current agent status and configuration
+Handlers.add("Agent-Status", Handlers.utils.hasMatchingTag("Action", "Agent-Status"), function(msg)
+  logInfo("Processing Agent-Status request")
+  
+  local status = {
+    agent_enabled = State.agent_enabled,
+    configuration = State.agent_config,
+    dca_stats = getDCAStats(),
+    market_data = getMarketDataSummary(),
+    trigger_status = getTriggerStatus(),
+    portfolio = State.agent_portfolio,
+    performance = State.agent_performance,
+    dexi_subscription = State.dexi_subscription,
+    last_actions = {
+      last_dca_execution = State.last_dca_execution,
+      last_market_data_update = State.last_market_data_update,
+      last_performance_tracking = State.last_performance_tracking
+    }
+  }
+  
+  ao.send({
+    Target = msg.From,
+    Action = "Agent-Status-Response",
+    Data = json.encode({
+      status = "success",
+      data = status
+    })
+  })
+  
+  logInfo("Agent status request processed")
+end)
+
+-- Configure Agent Handler: Update agent configuration
+Handlers.add("Configure-Agent", Handlers.utils.hasMatchingTag("Action", "Configure-Agent"), function(msg)
+  logInfo("Processing Configure-Agent request")
+  
+  local success, error = pcall(function()
+    local config = json.decode(msg.Data)
+    
+    -- Validate and update configuration
+    if config.dca_enabled ~= nil then
+      State.agent_config.dca_enabled = config.dca_enabled
+    end
+    
+    if config.smart_swap_enabled ~= nil then
+      State.agent_config.smart_swap_enabled = config.smart_swap_enabled
+    end
+    
+    if config.sentiment_response_enabled ~= nil then
+      State.agent_config.sentiment_response_enabled = config.sentiment_response_enabled
+    end
+    
+    if config.daily_budget_percentage and 
+       type(config.daily_budget_percentage) == "number" and 
+       config.daily_budget_percentage > 0 and config.daily_budget_percentage <= 1 then
+      State.agent_config.daily_budget_percentage = config.daily_budget_percentage
+    end
+    
+    if config.dca_slippage and 
+       type(config.dca_slippage) == "number" and 
+       config.dca_slippage > 0 and config.dca_slippage <= 50 then
+      State.agent_config.dca_slippage = config.dca_slippage
+    end
+    
+    logInfo("Agent configuration updated", State.agent_config)
+  end)
+  
+  if not success then
+    logError("Failed to update agent configuration", {error = error})
+    ao.send({
+      Target = msg.From,
+      Action = "Configure-Agent-Error",
+      Error = "Configuration update failed: " .. (error or "unknown error")
+    })
+    return
+  end
+  
+  ao.send({
+    Target = msg.From,
+    Action = "Configure-Agent-Response",
+    Data = json.encode({
+      status = "success",
+      configuration = State.agent_config
+    })
+  })
+end)
+
+-- Toggle Agent Handler: Enable/disable entire agent system
+Handlers.add("Toggle-Agent", Handlers.utils.hasMatchingTag("Action", "Toggle-Agent"), function(msg)
+  local enable = msg.Tags.Enable == "true"
+  
+  State.agent_enabled = enable
+  
+  logInfo("DeFAI Agent toggled", {enabled = enable})
+  
+  -- Initialize agent systems if enabling
+  if enable then
+    initializeMarketDataMonitoring()
+  end
+  
+  ao.send({
+    Target = msg.From,
+    Action = "Toggle-Agent-Response",
+    ["Agent-Enabled"] = tostring(State.agent_enabled),
+    Data = json.encode({
+      status = "success",
+      agent_enabled = State.agent_enabled
+    })
+  })
+end)
+
+-- Execute DCA Handler: Manually trigger DCA execution
+Handlers.add("Execute-DCA", Handlers.utils.hasMatchingTag("Action", "Execute-DCA"), function(msg)
+  logInfo("Manual DCA execution requested")
+  
+  if not State.agent_enabled then
+    ao.send({
+      Target = msg.From,
+      Action = "Execute-DCA-Error",
+      Error = "Agent is disabled"
+    })
+    return
+  end
+  
+  local dcaResult = executeDailyDCA()
+  
+  ao.send({
+    Target = msg.From,
+    Action = "Execute-DCA-Response",
+    Data = json.encode(dcaResult)
+  })
+end)
+
+-- Swap Confirmation Handler: Process confirmations from Botega
+Handlers.add("Swap-Confirmation", Handlers.utils.hasMatchingTag("Action", "Swap-Confirmation"), function(msg)
+  logInfo("Processing swap confirmation from Botega")
+  
+  local success, error = pcall(function()
+    local txId = msg.Tags["TX-ID"] or msg.Id
+    local usdaAmount = tonumber(msg.Tags["USDA-Amount"])
+    local aoReceived = tonumber(msg.Tags["AO-Received"])
+    local actualPrice = tonumber(msg.Tags["Actual-Price"])
+    local agentType = msg.Tags["Agent-Type"]
+    
+    if not txId or not usdaAmount or not aoReceived then
+      logError("Invalid swap confirmation data", {
+        tx_id = txId,
+        usda_amount = usdaAmount,
+        ao_received = aoReceived
+      })
+      return
+    end
+    
+    -- Update transaction records based on agent type
+    if agentType == "DCA" then
+      handleDCASwapConfirmation(txId, usdaAmount, aoReceived, actualPrice)
+    else
+      -- Handle other swap types (Smart-Swap, Sentiment-Boost)
+      for i, tx in ipairs(State.agent_transactions) do
+        if tx.status == "pending" and tonumber(tx.usda_amount) == usdaAmount then
+          tx.status = "completed"
+          tx.botega_tx_id = txId
+          tx.ao_received = tostring(aoReceived)
+          tx.actual_price = actualPrice and tostring(actualPrice) or "unknown"
+          tx.completed_at = getCurrentTimestamp()
+          
+          if agentType == tx.type then
+            logInfo("Swap confirmed", {
+              type = agentType,
+              tx_id = txId,
+              ao_received = aoReceived
+            })
+          end
+          break
+        end
+      end
+    end
+  end)
+  
+  if not success then
+    logError("Failed to process swap confirmation", {error = error})
+  end
 end)
 
 -- ============================================================================
