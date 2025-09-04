@@ -27,6 +27,20 @@
   - `Permaweb Arbitrager`（Coming Soon / 非活性）
   - 表示は最小限（テキスト + 小さなピル）、押下不能な項目は明確に無効表示。
 
+## ブランドコピー（固定文言）
+
+- Tagline: "Vibe Trading on belief. DeFAI Agent as NFT"
+- CTA: "Mint your DeFAI NFT."
+- SEO_Description: "Mint your DeFAI NFT and start vibe trading on belief. Each DeFAI Agent combines NFT, Smart Wallet, and AI Agent to deliver a real DeFAI UX."
+- OG_Description: "Mint your DeFAI NFT. Vibe trading on belief starts here with NFT + Smart Wallet + AI Agent."
+
+使用箇所（ルール）
+- Hero: 見出し or サブ見出しに Tagline を使用（改行/句点の装飾は加えない）。
+- メイン CTA: Mint 開始ボタンのラベルは CTA を使用。
+- SEO: `app/layout.tsx` の既定 `metadata.description` に SEO_Description を設定。
+- OGP: `metadata.openGraph.description` と `twitter.description` に OG_Description を設定。
+- 文体: 句読点・絵文字・過度な形容を避け、最小限で明快に表現。
+
 ## ブランド / トーン（AO ガイド適用）
 
 - サブトラクティブ（引き算）美学：要素・色・装飾を最小限にし、情報伝達を最優先。
@@ -149,10 +163,29 @@
 
 ## コピー（例）
 
-- ヒーロー: “Believe in AO’s growth. Mint AO MAXI for 1 USDA.”
+- ヒーロー: “Vibe Trading on belief. DeFAI Agent as NFT”
 - ミント注意: “Payment via USDA transfer. Over/under payment handled automatically.”
 - RandAO 待機: “Assigning your Lucky Number… Powered by RandAO (fallback ready).”
 - AI 出所: “Market Sentiment: Powered by Apus Network AI”
+
+### Next.js メタデータ例（App Router）
+```ts
+// app/layout.tsx
+export const metadata = {
+  title: 'BelieFi — AO MAXI',
+  description: 'Mint your DeFAI NFT and start vibe trading on belief. Each DeFAI Agent combines NFT, Smart Wallet, and AI Agent to deliver a real DeFAI UX.',
+  openGraph: {
+    title: 'BelieFi — AO MAXI',
+    description: 'Mint your DeFAI NFT. Vibe trading on belief starts here with NFT + Smart Wallet + AI Agent.',
+    type: 'website'
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'BelieFi — AO MAXI',
+    description: 'Mint your DeFAI NFT. Vibe trading on belief starts here with NFT + Smart Wallet + AI Agent.'
+  }
+}
+```
 
 ## 技術的補足（説明テキストのみ、UI に反映）
 
@@ -208,3 +241,4 @@
 - tailwind + shadcn-ui のスタイルトークンが AO ガイドの色/境界/動作に一致。
 - ライトモードのみ（Dark 未対応で可）。
 - 画像使用は NFT/トークン/ロゴに限定。アニメーションは 200ms 以下。
+- Brand Copy（Tagline/CTA/SEO/OG）が UI とメタデータに適用されている。
