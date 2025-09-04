@@ -9,11 +9,22 @@
 - ミント後に付与される「ラッキーナンバー（0–999）」と「マーケットセンチメント（bearish / neutral / bullish / very_bullish + 信頼度）」を魅力的に可視化。
 - 供給100・1アドレス1枚制限、現在の販売状況、最近のミント状況、所有NFT閲覧、簡易エージェント（DeFAI）状況の可視化を含む。
 
+## BelieFi コンテキスト
+- プロダクト名は「BelieFi」。本仕様はBelieFiのDeFAI NFTラインの一つ「AO MAXI」に対するもの。
+- そのほかのDeFAI NFT: 「The Tate Strategist」「Permaweb Arbitrager」（いずれも Coming Soon）。
+- ヘッダーに「プロダクトスイッチャー」を配置：
+  - `AO MAXI`（Active/現在ページ）
+  - `The Tate Strategist`（Coming Soon / 非活性）
+  - `Permaweb Arbitrager`（Coming Soon / 非活性）
+  - 表示は最小限（テキスト + 小さなピル）、押下不能な項目は明確に無効表示。
+
 ## ブランド / トーン（AOガイド適用）
 - サブトラクティブ（引き算）美学：要素・色・装飾を最小限にし、情報伝達を最優先。
 - 静的で秩序立った構造：縦スクロール中心の単一カラム、一定のリズムと余白、一貫した配置。
 - 非侵襲なUX：必要情報は常に視界内、不要要素は控えめ。状態遷移は簡潔で予測可能。
-- デフォルトはライト基調。ダークは任意（優先度低）。
+- ライトモードのみ（ダークは不要）。
+- 画像はNFT・トークンアイコン・ロゴに限定（装飾画像は不可）。
+- アニメーションは200ms以下、過度な動きは抑制。
 
 ### デザイン・トークン（スタイル仕様）
 - カラー:
@@ -25,16 +36,26 @@
   - ホバー背景: `#F0F0F0`
   - ボーダー: 通常 `#DDDDDD` / ホバー時 `#707070`
   - セカンダリボタン背景: `#FAFAFA`
+- セマンティックカラー（Tailwind参照値）:
+  - Success: `green-600`（例: ウォレット接続成功、TX成功）
+  - Warning: `yellow-400`（例: 高ガス、注意）
+  - Error: `red-500`（例: 失敗、高リスク）
+  - Info: `blue-500`（例: 補足情報）
 - タイポグラフィ:
   - フォント: Sans-serif（Manrope または Inter 系）
   - サイズ: ベース `14px`〜`18px`
   - 強調: 見出し・数値は `600–700`、補助は `400以下 + 小さめ + グレー`
 
 ### グローバル構造
-- ヘッダー: ロゴ + ナビ（`DELEGATE` / `MINT` / `BUILD`）。ホワイト背景、ボーダー無し、全ページで統一。
+- ヘッダー: 左に`BelieFi`ロゴ、中央〜右に`プロダクトスイッチャー`、その右に本プロダクトのナビ（`Mint` / `My NFT` / `Stats` / `Agent`）。
+  - 背景は白、影/ボーダーは原則無し（必要時は`#DDDDDD`の1pxに限定）。
+  - オプション: `sticky top-0 bg-white/95 backdrop-blur`（境界は極薄）—可読性最優先の範囲で使用可。
 - フッター: `DISCORD` / `GITHUB` / `POLICIES` のみ。最小・控えめ配置。
 
 ## 画面（フレーム）
+0. プロダクト選択（任意のトップ）
+   - AO MAXI（Active）を主要カードで提示。ほか2点は「Coming Soon」ピル付きの非活性カード。
+   - クリックで AO MAXI のミントページへ遷移。
 1. ランディング / ミント
    - ヒーロー: コレクション名「AO MAXI」、説明（“Believing in AO’s growth / Strategy: Maximize $AO”）。ビジュアルは控えめ、余白と見出しで強調。
    - ミントカード: 価格「1 USDA」、残り数/進捗（例: 37/100 minted）、1アドレス1枚、Mintボタン。ボーダーは `#DDDDDD`、ホバー時 `#707070`。
@@ -61,7 +82,7 @@
    - 市場データ更新時間、購読状態ピル。状態は色で示し、形状は統一。
 
 ## 主要コンポーネント（AOガイド適用）
-- `Header`（ロゴ、ナビ: `DELEGATE` / `MINT` / `BUILD`。白背景、影/罫線は原則無し）
+- `Header`（左: `BelieFi`ロゴ / 中央〜右: `プロダクトスイッチャー` / 右: AO MAXIのセクションナビ `Mint` `My NFT` `Stats` `Agent`）
 - `Footer`（`DISCORD` / `GITHUB` / `POLICIES`）
 - `MintCard`（価格、残り数、CTA、制限アイコン。枠線`#DDDDDD`、ホバー`#707070`）
 - `ProgressBar`（供給進捗。色はプライマリグリーン）
@@ -71,15 +92,23 @@
 - `StatusPill`（Active/Paused/Sold out/RandAO Pending/AI Powered）
 - `Toast / Inline Alert`（返金や失敗理由。過度なアニメは避ける）
 - `Empty / Loading / Skeleton`（骨組みはグレー階調で静的）
+ - `ProductSwitcher`（`AO MAXI`=Active、`The Tate Strategist`/`Permaweb Arbitrager`=Coming Soon）
 
 ### ボタン（スタイルと状態）
 - プライマリ（緑）: `#00C853` → Hover: `#23BE30`、文字は白、境界は背景色同系。
 - セカンダリ（白）: 背景`#FAFAFA`、ホバーで薄いグレー背景 + 濃いボーダー。
 - Disabled: グレイアウト、カーソル変更なし、`disabled`で状態制御。
+ - ユーティリティ/ナビ用（中立CTA）: `bg-black hover:bg-gray-900 text-white` を可（Mint等の主要行為は緑を優先）。
+ - ローディング: `opacity-50` + アイコン`animate-spin`（200ms以内）
 
 ### ウォレット ミニモーダル
 - 右上ドロップダウン／右下開き。`Copy` / `Explorer` / `Disconnect` の3アクション。
 - 高い視認性だが主張は控えめ。
+
+#### ウォレットボタン（挙動例）
+- 未接続: `bg-black hover:bg-gray-800 text-white`（アイコン + テキスト）。
+- 接続中: スピナー表示（`animate-spin`）。
+- 接続済: `bg-green-600 hover:bg-green-700 text-white` + 短縮アドレス表示。
 
 ## 状態 / UX（AOガイド適用）
 - ボタン状態: `idle → checking → awaiting-payment → pending-randao → success / error`（色で明瞭化、アニメは最小）
@@ -88,6 +117,7 @@
 - タブ切替: アクティブは `border-bottom: 2px solid #00C853`。
 - カウントダウン等がある場合はリアルタイム更新（Withdraw相当UIが登場する場合に準拠）。
 - アクセシビリティ: コントラスト、キーボード操作、フォーカスリング、ARIA（ボタン/ダイアログ/トースト）。
+ - ローディング/成功/失敗: `gray-50`の控えめなカード、`green-100`/`red-50`等を使用し過度な演出は避ける。
 
 ## ダミーデータ（モック）
 - コレクション: `name=AO MAXI`, `symbol=AOMAXI`, `max_supply=100`, `price=1 USDA`
@@ -115,13 +145,34 @@
 - タブレット: 768px、カード2列。
 - モバイル: 360–390px、カード1列、主要CTAは常時視認可能。
 
-## 成果物
-- Figmaファイル：
-  - フレーム: Landing/Mint, My NFT, Stats, Agent, Global Components
-  - コンポーネント化とVariants（ボタン/バッジ/カード/モーダル/トースト/プログレス）
-  - ライト基調必須（ダークは任意）
-  - 簡易プロトタイプ（主要遷移: ミントフロー/詳細モーダル）
-- 任意: HeroセクションとMintカードのみの軽量HTMLプレビュー（ダミー）
+## 成果物（Next.js モックアップ / 技術スタック）
+- Tech: `Next.js`（App Router推奨）, `TypeScript`, `tailwindcss`, `shadcn-ui`
+- 推奨ライブラリ: `zustand`（グローバル状態）, `react-hook-form`（バリデーション）
+- ルーティング（例）
+  - `/` … プロダクト選択（任意）または AO MAXI ランディング
+  - `/mint` … AO MAXI ミント（ランディング兼用可）
+  - `/my` … My NFT
+  - `/stats` … コレクション統計
+  - `/agent` … DeFAI 概要
+- ディレクトリ構成（例）
+  - `app/(routes)/{page}/page.tsx` … 各ページ
+  - `components/ui/*` … `shadcn-ui`導入コンポーネント
+  - `components/*` … `MintCard`, `SentimentBadge`, `LuckyNumberDisplay`, `StatusPill`, `WalletDropdown`, `RightSheet`, `ProductSwitcher`
+  - `lib/design-tokens.ts` … カラー/タイポ/スペーシング（tailwind.theme 反映）
+  - `styles/globals.css` … ベース/ユーティリティ（ライト基調、必要ならダークも）
+- Tailwind 設定
+  - `theme.extend.colors` に `#00C853`（hover: `#23BE30`）, `#DDDDDD`, `#707070`, `#F0F0F0`, `#FAFAFA` 等を登録
+  - フォントは Manrope/Inter を設定、数字はタブラー（`tabular-nums`）
+ - Tailwind テーマ例（併用可）
+   - `neutral`: `{ background: #fff, surface: #f4f4f4, border: #e5e7eb, text: #000, subtext: #6b7280 }`
+   - `semantic`: `{ success: #16A34A, warning: #FACC15, danger: #EF4444, info: #3B82F6 }`
+   - `state`: `{ primary: #000000, onPrimary: #ffffff, disabled: #d1d5db }`
+- shadcn-ui
+  - Button（primary/secondary/disabled）, Tabs（下線=2px green）, Dialog/Sheet（右スライド固定幅480px）, DropdownMenu（Wallet/製品切替）を採用
+- 画面実装要件
+  - 主要状態（`idle → checking → awaiting-payment → pending-randao → success/error`）がUIで判別可能
+  - 入力エラーはフィールド境界のみ赤表示
+  - Skeleton/Empty/Toastを用意、アニメは抑制
 
 ## 受け入れ基準
 - AOデザインガイドの原則（最小・秩序・非侵襲）がページ全体で守られている。
@@ -129,3 +180,7 @@
 - ラッキーナンバーとセンチメントが“誇らしく”見えるが、演出は抑制的で可読性を最優先。
 - 統計とエージェント概要はカードで瞬時に把握できる。
 - モバイルでの可読性と操作性が高い。
+- Next.js モックアップで上記各ページがナビゲート可能（ヘッダーの ProductSwitcher 含む）。
+- tailwind + shadcn-ui のスタイルトークンがAOガイドの色/境界/動作に一致。
+ - ライトモードのみ（Dark未対応で可）。
+ - 画像使用はNFT/トークン/ロゴに限定。アニメーションは200ms以下。
